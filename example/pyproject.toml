@@ -1,0 +1,33 @@
+[tool.poetry]
+name = "voice-note"
+version = "1.0.1"
+description = "A small speech-to-text app that uses OpenAI's Voice model"
+authors = ["savbell"]
+license = "GPL-3.0-or-later"
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.11"
+faster-whisper = "1.0.2"
+openai = "1.28.0"
+requests = "^2.31"
+PyQt5 = "5.15.10"
+pynput = "1.7.6"
+python-dotenv = "1.0.0"
+PyYAML = "6.0.1"
+numpy = ">=1.26,<2.0"
+scipy = ">=1.11,<2.0"
+soundfile = "0.12.1"
+sounddevice = "0.4.6"
+pyperclip = "^1.8"
+setuptools = "<82"
+webrtcvad-wheels = "2.0.11.post1"
+ctranslate2 = {extras = ["cuda12"], version = "^4.8.0"}
+
+[tool.poetry.group.dev.dependencies]
+pyinstaller = {version = "^6.21.0", python = ">=3.11,<3.16"}
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
