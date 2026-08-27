@@ -1,9 +1,9 @@
 import asyncio
 import os
+import subprocess
 import tempfile
 
 import edge_tts
-from playsound import playsound
 
 # Uma voz neural padrão por idioma. Ver `edge-tts --list-voices` para outras opções.
 _DEFAULT_VOICES = {
@@ -24,9 +24,13 @@ def voice_for_language(lang_code, fallback='en-US-AriaNeural'):
     return _DEFAULT_VOICES.get(lang_code, fallback)
 
 
+SYNTHESIS_TIMEOUT_S = 20
+PLAYBACK_TIMEOUT_S = 60
+
+
 async def _synthesize(text, voice, output_path):
     communicate = edge_tts.Communicate(text, voice)
-    await communicate.save(output_path)
+    await asyncio.wait_for(communicate.save(output_path), timeout=SYNTHESIS_TIMEOUT_S)
 
 
 def speak(text, lang_code):
@@ -41,6 +45,6 @@ def speak(text, lang_code):
 
     try:
         asyncio.run(_synthesize(text, voice, output_path))
-        playsound(output_path)
+        subprocess.run(['afplay', output_path], timeout=PLAYBACK_TIMEOUT_S, check=True)
     finally:
         os.remove(output_path)

@@ -16,9 +16,7 @@ soundfile = "0.12.1"
 webrtcvad-wheels = "2.0.11.post1"
 deep-translator = "^1.11.4"
 edge-tts = "^7.2.8"
-playsound = "1.2.2"
 setuptools = "<82"
-pyobjc-framework-Cocoa = {version = "*", markers = "sys_platform == 'darwin'"}
 
 [build-system]
 requires = ["poetry-core"]

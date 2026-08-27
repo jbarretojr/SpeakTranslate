@@ -10,11 +10,13 @@ INITIAL_SILENCE_SKIP_S = 0.15
 
 
 def record_utterance(sample_rate=16000, device=None, silence_duration_ms=900,
-                      min_duration_ms=250, max_duration_s=30):
+                      min_duration_ms=250, max_duration_s=30, stop_event=None):
     """
     Grava áudio do microfone até detectar uma pausa na fala (VAD) ou atingir a
     duração máxima.
 
+    :param stop_event: threading.Event opcional; quando definido, interrompe a
+        gravação em andamento (retorna None).
     Retorna:
         np.ndarray (int16) com o áudio gravado, ou None se não houve fala
         suficiente para processar.
@@ -41,7 +43,11 @@ def record_utterance(sample_rate=16000, device=None, silence_duration_ms=900,
                          blocksize=frame_size, device=device,
                          callback=audio_callback):
         while True:
-            data_ready.wait()
+            if stop_event is not None and stop_event.is_set():
+                return None
+
+            if not data_ready.wait(timeout=0.2):
+                continue
             data_ready.clear()
 
             if len(audio_buffer) < frame_size:

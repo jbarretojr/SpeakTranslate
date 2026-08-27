@@ -73,7 +73,10 @@ def main():
     print('Pressione Ctrl+C para encerrar.')
     try:
         while True:
-            process_once(model, args)
+            try:
+                process_once(model, args)
+            except Exception as exc:
+                print(f'Erro ao processar a frase: {exc}')
     except KeyboardInterrupt:
         print('\nEncerrando.')
 
