@@ -3,7 +3,9 @@ import threading
 import tkinter as tk
 from tkinter import ttk, scrolledtext
 
+from app_constants import LANGUAGES, WHISPER_MODELS
 from audio_capture import list_input_devices, record_utterance
+from streaming_gui import StreamingTranslationTab
 from transcription import create_model, transcribe
 from translation import translate
 from tts import speak
@@ -11,7 +13,6 @@ from tts import speak
 SAMPLE_RATE = 16000
 DEFAULT_MODEL = 'base'
 DEFAULT_TARGET_LANG = 'pt'
-WHISPER_MODELS = ['tiny', 'base', 'small', 'medium', 'large-v3']
 
 # Rótulos do botão de alternância, no mesmo espírito do atalho
 # Ctrl+Shift+Space do VoiceNote: um clique inicia a gravação, o próximo
@@ -22,18 +23,21 @@ LABEL_RECORDING = '⏹ Parar Gravação'
 LABEL_PROCESSING = 'Processando...'
 
 
-class SpeakTranslateGUI:
-    def __init__(self, root):
-        self.root = root
-        self.root.title('SpeakTranslate')
-        self.root.geometry('560x460')
-        self.root.minsize(480, 360)
+class InitialTranslationTab(ttk.Frame):
+    """
+    Aba "Tradução Inicial": grava uma fala por vez (toggle iniciar/parar
+    gravação), transcreve, traduz e fala o resultado. Comportamento
+    inalterado em relação à versão original de tela única do app.
+    """
+
+    def __init__(self, master):
+        super().__init__(master, padding=0)
 
         self.model = None
         self._loaded_model_size = None
 
         # Tkinter não é thread-safe: chamar métodos de widgets (inclusive
-        # `root.after`) a partir da worker thread não é confiável e pode
+        # `after`) a partir da worker thread não é confiável e pode
         # simplesmente nunca disparar. Por isso toda comunicação da worker
         # thread com a UI passa por esta fila, drenada por um polling que
         # roda inteiramente na thread principal (_drain_queue).
@@ -47,16 +51,19 @@ class SpeakTranslateGUI:
 
         self._build_widgets()
         self._refresh_devices()
-        self.root.protocol('WM_DELETE_WINDOW', self._on_close)
-        self.root.after(100, self._drain_queue)
+        self.after(100, self._drain_queue)
 
     def _build_widgets(self):
-        options_frame = ttk.Frame(self.root, padding=10)
+        options_frame = ttk.Frame(self, padding=10)
         options_frame.pack(fill='x')
 
         ttk.Label(options_frame, text='Idioma de destino:').grid(row=0, column=0, sticky='w')
-        self.target_lang_var = tk.StringVar(value=DEFAULT_TARGET_LANG)
-        self.target_lang_entry = ttk.Entry(options_frame, textvariable=self.target_lang_var, width=8)
+        default_label = next(
+            (label for code, label in LANGUAGES if code == DEFAULT_TARGET_LANG), LANGUAGES[0][1])
+        self.target_lang_var = tk.StringVar(value=default_label)
+        self.target_lang_entry = ttk.Combobox(
+            options_frame, textvariable=self.target_lang_var, width=12, state='readonly',
+            values=[label for _, label in LANGUAGES])
         self.target_lang_entry.grid(row=0, column=1, sticky='w', padx=(4, 16))
 
         ttk.Label(options_frame, text='Modelo Whisper:').grid(row=0, column=2, sticky='w')
@@ -73,14 +80,14 @@ class SpeakTranslateGUI:
         self.refresh_devices_button.grid(row=1, column=3, sticky='w', padx=4, pady=(8, 0))
 
         self.status_var = tk.StringVar(value='Ocioso')
-        ttk.Label(self.root, textvariable=self.status_var, font=('TkDefaultFont', 13, 'bold')).pack(pady=(8, 4))
+        ttk.Label(self, textvariable=self.status_var, font=('TkDefaultFont', 13, 'bold')).pack(pady=(8, 4))
 
-        button_frame = ttk.Frame(self.root)
+        button_frame = ttk.Frame(self)
         button_frame.pack(pady=4)
         self.toggle_button = ttk.Button(button_frame, text=LABEL_IDLE, command=self._on_toggle)
         self.toggle_button.pack(side='left', padx=6)
 
-        self.log_text = scrolledtext.ScrolledText(self.root, height=16, state='disabled', wrap='word')
+        self.log_text = scrolledtext.ScrolledText(self, height=16, state='disabled', wrap='word')
         self.log_text.pack(fill='both', expand=True, padx=10, pady=10)
 
     def _refresh_devices(self):
@@ -103,6 +110,13 @@ class SpeakTranslateGUI:
         if not label:
             return None
         return int(label.split(':', 1)[0])
+
+    def _selected_target_lang_code(self):
+        label = self.target_lang_var.get()
+        for code, lang_label in LANGUAGES:
+            if lang_label == label:
+                return code
+        return DEFAULT_TARGET_LANG
 
     # -- chamadas seguras a partir da worker thread: só enfileiram -----------
 
@@ -135,7 +149,7 @@ class SpeakTranslateGUI:
                 self._state = payload
                 self._sync_controls()
 
-        self.root.after(100, self._drain_queue)
+        self.after(100, self._drain_queue)
 
     def _on_toggle(self):
         if self._state == 'idle':
@@ -158,7 +172,7 @@ class SpeakTranslateGUI:
             self.model_combo.configure(state='readonly')
             self.device_combo.configure(state='readonly')
             self.refresh_devices_button.configure(state='normal')
-            self.target_lang_entry.configure(state='normal')
+            self.target_lang_entry.configure(state='readonly')
         elif self._state == 'recording':
             self.toggle_button.configure(text=LABEL_RECORDING, state='normal')
             self.model_combo.configure(state='disabled')
@@ -168,12 +182,12 @@ class SpeakTranslateGUI:
         else:  # processing
             self.toggle_button.configure(text=LABEL_PROCESSING, state='disabled')
 
-    def _on_close(self):
+    def shutdown(self):
+        """Sinaliza para a worker thread encerrar; não bloqueia a saída do app."""
         self._record_stop_event.set()
-        self.root.destroy()
 
     def _run_cycle(self):
-        target_lang = self.target_lang_var.get().strip() or DEFAULT_TARGET_LANG
+        target_lang = self._selected_target_lang_code()
         model_size = self.model_var.get()
         device = self._selected_device_index()
 
@@ -212,9 +226,33 @@ class SpeakTranslateGUI:
             self._finish('idle')
 
 
+class App:
+    def __init__(self, root):
+        self.root = root
+        self.root.title('SpeakTranslate')
+        self.root.geometry('640x560')
+        self.root.minsize(560, 420)
+
+        notebook = ttk.Notebook(root)
+        notebook.pack(fill='both', expand=True)
+
+        self.initial_tab = InitialTranslationTab(notebook)
+        notebook.add(self.initial_tab, text='Tradução Inicial')
+
+        self.streaming_tab = StreamingTranslationTab(notebook)
+        notebook.add(self.streaming_tab, text='Tradução por Streaming')
+
+        self.root.protocol('WM_DELETE_WINDOW', self._on_close)
+
+    def _on_close(self):
+        self.initial_tab.shutdown()
+        self.streaming_tab.shutdown()
+        self.root.destroy()
+
+
 def main():
     root = tk.Tk()
-    SpeakTranslateGUI(root)
+    App(root)
     root.mainloop()
 
 

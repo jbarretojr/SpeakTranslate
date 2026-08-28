@@ -2,7 +2,7 @@ import numpy as np
 import sounddevice as sd
 import webrtcvad
 from collections import deque
-from threading import Event
+from threading import Event, Lock
 
 FRAME_DURATION_MS = 30
 VAD_AGGRESSIVENESS = 2
@@ -84,3 +84,40 @@ def record_utterance(sample_rate=16000, device=None, silence_duration_ms=900,
 
 def list_input_devices():
     return sd.query_devices()
+
+
+class ContinuousAudioCapture:
+    """
+    Captura de áudio contínua (sem detecção de pausa/fim de fala), usada pela
+    transcrição em streaming: mantém um stream de entrada aberto e acumula o
+    áudio recebido; quem consome (`read_available`) decide quando e quanto
+    processar, em vez de esperar uma pausa na fala para começar.
+    """
+
+    def __init__(self, sample_rate=16000, device=None):
+        self.sample_rate = sample_rate
+        self._lock = Lock()
+        self._chunks = []
+        self._stream = sd.InputStream(
+            samplerate=sample_rate, channels=1, dtype='int16',
+            device=device, callback=self._on_audio,
+        )
+
+    def _on_audio(self, indata, frames, time_info, status):
+        with self._lock:
+            self._chunks.append(indata[:, 0].copy())
+
+    def start(self):
+        self._stream.start()
+
+    def stop(self):
+        self._stream.stop()
+        self._stream.close()
+
+    def read_available(self):
+        """Retorna (e remove do buffer interno) todo áudio acumulado desde a última leitura."""
+        with self._lock:
+            if not self._chunks:
+                return np.empty(0, dtype=np.int16)
+            chunks, self._chunks = self._chunks, []
+        return np.concatenate(chunks)
