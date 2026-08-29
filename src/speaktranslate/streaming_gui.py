@@ -13,7 +13,7 @@ SAMPLE_RATE = 16000
 DEFAULT_MODEL = 'base'
 DEFAULT_SOURCE_LANG = 'en'
 DEFAULT_TARGET_LANG = 'pt'
-PROCESS_INTERVAL_S = 1.0  # intervalo entre passagens de re-transcrição
+PROCESS_INTERVAL_S = 0.5  # intervalo entre passagens de re-transcrição
 
 AUTO_DETECT_LABEL = 'Detectar automaticamente'
 
@@ -41,6 +41,7 @@ class StreamingTranslationTab(ttk.Frame):
         self._stop_event = threading.Event()
         self._worker_thread = None
         self._input_devices = []
+        self._last_preview_text = ''
 
         self._build_widgets()
         self._refresh_devices()
@@ -95,21 +96,25 @@ class StreamingTranslationTab(ttk.Frame):
         self.toggle_button = ttk.Button(button_frame, text=LABEL_IDLE, command=self._on_toggle)
         self.toggle_button.pack(side='left', padx=6)
 
-        self.preview_var = tk.StringVar(value='')
-        ttk.Label(self, textvariable=self.preview_var, foreground='#888',
-                  font=('TkDefaultFont', 10, 'italic'), wraplength=600, justify='left').pack(fill='x', padx=10)
-
         panes = ttk.Panedwindow(self, orient='horizontal')
         panes.pack(fill='both', expand=True, padx=10, pady=10)
 
+        preview_kwargs = dict(foreground='#888', font=('TkDefaultFont', 10, 'italic'),
+                               wraplength=290, justify='left', anchor='w')
+
         transcript_frame = ttk.Frame(panes)
         ttk.Label(transcript_frame, text='Transcrição (original)').pack(anchor='w')
+        self.preview_var = tk.StringVar(value='')
+        ttk.Label(transcript_frame, textvariable=self.preview_var, **preview_kwargs).pack(fill='x', pady=(0, 4))
         self.transcript_text = scrolledtext.ScrolledText(transcript_frame, height=16, state='disabled', wrap='word')
         self.transcript_text.pack(fill='both', expand=True)
         panes.add(transcript_frame, weight=1)
 
         translation_frame = ttk.Frame(panes)
         ttk.Label(translation_frame, text='Tradução').pack(anchor='w')
+        self.preview_translation_var = tk.StringVar(value='')
+        ttk.Label(translation_frame, textvariable=self.preview_translation_var, **preview_kwargs).pack(
+            fill='x', pady=(0, 4))
         self.translation_text = scrolledtext.ScrolledText(translation_frame, height=16, state='disabled', wrap='word')
         self.translation_text.pack(fill='both', expand=True)
         panes.add(translation_frame, weight=1)
@@ -165,6 +170,9 @@ class StreamingTranslationTab(ttk.Frame):
     def _set_preview(self, text):
         self._event_queue.put(('preview', text))
 
+    def _set_preview_translation(self, text):
+        self._event_queue.put(('preview_translation', text))
+
     def _finish(self):
         self._event_queue.put(('finish', None))
 
@@ -185,6 +193,8 @@ class StreamingTranslationTab(ttk.Frame):
                 self.status_var.set(payload)
             elif kind == 'preview':
                 self.preview_var.set(payload)
+            elif kind == 'preview_translation':
+                self.preview_translation_var.set(payload)
             elif kind == 'finish':
                 self._running = False
                 self._sync_controls()
@@ -249,6 +259,7 @@ class StreamingTranslationTab(ttk.Frame):
 
             engine = LocalAgreementTranscriber(self.model, sample_rate=SAMPLE_RATE, language=source_lang)
             last_detected_lang = source_lang or 'en'
+            self._last_preview_text = ''
 
             self._set_status('Ouvindo...')
             capture = ContinuousAudioCapture(sample_rate=SAMPLE_RATE, device=device)
@@ -269,6 +280,8 @@ class StreamingTranslationTab(ttk.Frame):
             if final_sentence:
                 self._translate_and_show(final_sentence, last_detected_lang, target_lang)
 
+            self._set_preview('')
+            self._set_preview_translation('')
             self._set_status('Ocioso')
         except Exception as exc:
             self._append_transcript(f'\n[Erro: {exc}]')
@@ -286,9 +299,33 @@ class StreamingTranslationTab(ttk.Frame):
         if result['committed']:
             self._append_transcript(result['committed'])
         self._set_preview(result['preview'])
+
         if result['sentence']:
+            # Frase fechada: sai da prévia e vira texto definitivo no bloco.
+            self._set_preview_translation('')
             self._translate_and_show(result['sentence'], result['language'], target_lang)
+        else:
+            # Traduz só o trechinho tentativo mais recente (o mesmo texto
+            # mostrado na prévia da transcrição) — nunca acumula, é sempre
+            # substituído a cada passagem, e por ser curto (poucas palavras)
+            # a tradução sai quase imediata.
+            self._update_preview_translation(result['preview'], result['language'], target_lang)
+
         return result['language']
+
+    def _update_preview_translation(self, preview_text, source_lang, target_lang):
+        preview_text = preview_text.strip()
+        if preview_text == self._last_preview_text:
+            return
+        self._last_preview_text = preview_text
+        if not preview_text:
+            self._set_preview_translation('')
+            return
+        try:
+            translated = translate(preview_text, source_lang, target_lang)
+        except Exception:
+            return  # falha na tradução provisória não é grave; a próxima passagem tenta de novo
+        self._set_preview_translation(translated)
 
     def _translate_and_show(self, sentence, source_lang, target_lang):
         sentence = sentence.strip()

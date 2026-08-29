@@ -18,12 +18,26 @@ class LocalAgreementTranscriber:
     """
 
     def __init__(self, model, sample_rate=16000, language=None,
-                 min_chunk_s=1.0, max_buffer_s=25.0):
+                 min_chunk_s=1.0, max_buffer_s=25.0, silence_gap_s=1.0,
+                 min_word_probability=0.3):
         self.model = model
         self.sample_rate = sample_rate
         self.language = language
         self.min_chunk_s = min_chunk_s
         self.max_buffer_s = max_buffer_s
+        # O whisper pode "alucinar" palavras curtas (ex.: "Bye.", "Thank you.")
+        # em trechos de silêncio/ruído, mesmo com vad_filter ativado — quase
+        # sempre com probabilidade baixa. Descartamos palavras abaixo desse
+        # limiar para não deixar esse tipo de lixo entrar na transcrição.
+        self.min_word_probability = min_word_probability
+        # Se o trecho de áudio depois da última palavra reconhecida (dentro
+        # do próprio buffer, não relógio de parede) for maior que isso,
+        # tratamos como pausa/fim de fala e forçamos a confirmação do que
+        # sobrou. Medir pelo conteúdo do áudio (em vez de contar passagens ou
+        # tempo de relógio) deixa isso imune tanto a oscilações do whisper
+        # (uma palavra "piscando" entre passagens) quanto à variação de
+        # quanto tempo cada passagem de re-transcrição demora.
+        self.silence_gap_s = silence_gap_s
 
         self._audio = np.empty(0, dtype=np.float32)
         self._prev_words = []  # hipótese (lista de strings) da passagem anterior
@@ -46,10 +60,14 @@ class LocalAgreementTranscriber:
           - 'committed': texto recém-confirmado nesta passagem (pode ser vazio)
           - 'preview': hipótese provisória atual (pode mudar na próxima passagem)
           - 'sentence': frase completa pronta para tradução, ou None
+          - 'pending': frase ainda sendo formada (comitada, sem pontuação de fim)
           - 'language': idioma detectado nesta passagem
         """
         if not self.has_pending_audio():
-            return {'committed': '', 'preview': '', 'sentence': None, 'language': self.language}
+            return {'committed': '', 'preview': '', 'sentence': None,
+                    'pending': self._pending_sentence, 'language': self.language}
+
+        buffer_duration = self._audio.size / self.sample_rate
 
         segments, info = self.model.transcribe(
             self._audio,
@@ -63,26 +81,50 @@ class LocalAgreementTranscriber:
         for segment in segments:
             for word in (segment.words or []):
                 text = word.word.strip()
-                if text:
+                if text and word.probability >= self.min_word_probability:
                     words.append((text, word.start, word.end))
 
+        # Silêncio depois da última palavra reconhecida (ou o buffer inteiro,
+        # se nada foi reconhecido) — o sinal usado para detectar pausa/fim de
+        # fala, ver `silence_gap_s` acima.
+        trailing_silence = buffer_duration - (words[-1][2] if words else 0.0)
+
+        if not words:
+            # Nada reconhecido no buffer inteiro (silêncio total). Não deixa
+            # o buffer crescer sem limite esperando a próxima fala.
+            self._audio = np.empty(0, dtype=np.float32)
+            self._prev_words = []
+            sentence = None
+            if self._pending_sentence and trailing_silence >= self.silence_gap_s:
+                sentence = self._pending_sentence
+                self._pending_sentence = ''
+            return {'committed': '', 'preview': '', 'sentence': sentence,
+                    'pending': self._pending_sentence, 'language': info.language}
+
         commit_len = self._agreement_length(words)
+        forced = False
+
+        # Pausa/fim de fala: sobrou silêncio real (medido no áudio) depois
+        # da última palavra reconhecida — força a confirmação de tudo que
+        # está pendente em vez de esperar o crescimento estável normal do
+        # LocalAgreement (que só confirma quando a hipótese CRESCE).
+        if commit_len == 0 and trailing_silence >= self.silence_gap_s:
+            commit_len = len(words)
+            forced = True
 
         # Corte de segurança: se o buffer ficou grande demais sem nenhum
         # ponto de concordância (ex.: fala contínua sem pausas por muito
         # tempo), força a confirmação de tudo transcrito até agora para não
         # deixar o custo de re-transcrição crescer sem limite.
-        forced = False
-        if commit_len == 0 and self._audio.size >= self.max_buffer_s * self.sample_rate and words:
+        if commit_len == 0 and self._audio.size >= self.max_buffer_s * self.sample_rate:
             commit_len = len(words)
             forced = True
 
         committed_words = self._dedupe_boundary(words[:commit_len])
         committed_text = ' '.join(w[0] for w in committed_words)
-        if words[:commit_len]:
-            self._last_committed_words = [w[0] for w in words[:commit_len]][-3:]
 
         if words[:commit_len]:
+            self._last_committed_words = [w[0] for w in words[:commit_len]][-3:]
             # Corta no início da próxima palavra ainda não confirmada (se
             # houver) em vez do fim da última confirmada, pra não deixar
             # sobras de áudio da palavra comitada no início do próximo
@@ -102,14 +144,15 @@ class LocalAgreementTranscriber:
         sentence = None
         if committed_text:
             self._pending_sentence = (self._pending_sentence + ' ' + committed_text).strip()
-            if forced or self._pending_sentence.rstrip().endswith(SENTENCE_END_CHARS):
-                sentence = self._pending_sentence
-                self._pending_sentence = ''
+        if self._pending_sentence and (forced or self._pending_sentence.rstrip().endswith(SENTENCE_END_CHARS)):
+            sentence = self._pending_sentence
+            self._pending_sentence = ''
 
         return {
             'committed': committed_text,
             'preview': preview_text,
             'sentence': sentence,
+            'pending': self._pending_sentence,
             'language': info.language,
         }
 
@@ -155,6 +198,7 @@ class LocalAgreementTranscriber:
             return 0
         if agree_len == len(words) == len(self._prev_words):
             # hipótese não cresceu desde a última passagem (ex.: silêncio) —
-            # não há nada de novo a confirmar ainda.
+            # não há nada de novo a confirmar ainda pela via normal (a
+            # detecção de pausa por silêncio, acima, cuida de soltar isso).
             return 0
         return max(0, agree_len - 1)
