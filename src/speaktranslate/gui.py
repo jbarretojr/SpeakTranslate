@@ -3,7 +3,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk, scrolledtext
 
-from app_constants import LANGUAGES, WHISPER_MODELS
+from app_constants import LANGUAGES, TTS_ENGINES, WHISPER_MODELS
 from audio_capture import list_input_devices, record_utterance
 from streaming_gui import StreamingTranslationTab
 from transcription import create_model, transcribe
@@ -79,6 +79,14 @@ class InitialTranslationTab(ttk.Frame):
         self.refresh_devices_button = ttk.Button(options_frame, text='Atualizar', command=self._refresh_devices)
         self.refresh_devices_button.grid(row=1, column=3, sticky='w', padx=4, pady=(8, 0))
 
+        ttk.Label(options_frame, text='Motor de voz:').grid(row=2, column=0, sticky='w', pady=(8, 0))
+        default_tts_label = TTS_ENGINES[0][1]
+        self.tts_engine_var = tk.StringVar(value=default_tts_label)
+        self.tts_engine_combo = ttk.Combobox(
+            options_frame, textvariable=self.tts_engine_var, width=14, state='readonly',
+            values=[label for _, label in TTS_ENGINES])
+        self.tts_engine_combo.grid(row=2, column=1, sticky='w', padx=(4, 16), pady=(8, 0))
+
         self.status_var = tk.StringVar(value='Ocioso')
         ttk.Label(self, textvariable=self.status_var, font=('TkDefaultFont', 13, 'bold')).pack(pady=(8, 4))
 
@@ -117,6 +125,13 @@ class InitialTranslationTab(ttk.Frame):
             if lang_label == label:
                 return code
         return DEFAULT_TARGET_LANG
+
+    def _selected_tts_engine(self):
+        label = self.tts_engine_var.get()
+        for code, engine_label in TTS_ENGINES:
+            if engine_label == label:
+                return code
+        return TTS_ENGINES[0][0]
 
     # -- chamadas seguras a partir da worker thread: só enfileiram -----------
 
@@ -173,12 +188,14 @@ class InitialTranslationTab(ttk.Frame):
             self.device_combo.configure(state='readonly')
             self.refresh_devices_button.configure(state='normal')
             self.target_lang_entry.configure(state='readonly')
+            self.tts_engine_combo.configure(state='readonly')
         elif self._state == 'recording':
             self.toggle_button.configure(text=LABEL_RECORDING, state='normal')
             self.model_combo.configure(state='disabled')
             self.device_combo.configure(state='disabled')
             self.refresh_devices_button.configure(state='disabled')
             self.target_lang_entry.configure(state='disabled')
+            self.tts_engine_combo.configure(state='disabled')
         else:  # processing
             self.toggle_button.configure(text=LABEL_PROCESSING, state='disabled')
 
@@ -190,6 +207,7 @@ class InitialTranslationTab(ttk.Frame):
         target_lang = self._selected_target_lang_code()
         model_size = self.model_var.get()
         device = self._selected_device_index()
+        tts_engine = self._selected_tts_engine()
 
         try:
             if self.model is None or self._loaded_model_size != model_size:
@@ -218,7 +236,7 @@ class InitialTranslationTab(ttk.Frame):
             self._log(f'[{target_lang}] {translated_text}')
 
             self._set_status('Falando...')
-            speak(translated_text, target_lang)
+            speak(translated_text, target_lang, engine=tts_engine)
         except Exception as exc:
             self._log(f'Erro ao processar a frase: {exc}')
         finally:

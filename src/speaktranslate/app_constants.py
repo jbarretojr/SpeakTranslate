@@ -15,3 +15,12 @@ LANGUAGES = [
     ('ko', 'Coreano'),
     ('zh', 'Chinês'),
 ]
+
+# Motores de síntese de voz oferecidos (ver tts.py). Piper é o padrão (100%
+# local/offline; baixa o modelo de voz na primeira vez que um idioma é usado,
+# sem voz disponível para japonês); 'edge' é online (nuvem, vozes neurais).
+# O primeiro item da lista é o selecionado por padrão na interface.
+TTS_ENGINES = [
+    ('piper', 'Piper (local)'),
+    ('edge', 'Edge (nuvem)'),
+]

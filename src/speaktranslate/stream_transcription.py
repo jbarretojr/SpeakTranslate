@@ -19,12 +19,18 @@ class LocalAgreementTranscriber:
 
     def __init__(self, model, sample_rate=16000, language=None,
                  min_chunk_s=1.0, max_buffer_s=25.0, silence_gap_s=1.0,
-                 min_word_probability=0.3):
+                 min_word_probability=0.3, max_unpunctuated_words=20):
         self.model = model
         self.sample_rate = sample_rate
         self.language = language
         self.min_chunk_s = min_chunk_s
         self.max_buffer_s = max_buffer_s
+        # Segurança para fala contínua sem pontuação clara (o whisper às
+        # vezes não pontua direito): se a frase pendente acumular esse tanto
+        # de palavras sem fechar por pontuação nem por pausa, fecha assim
+        # mesmo — evita esperar o corte de segurança de `max_buffer_s`
+        # (bem mais lento) para dar algum retorno.
+        self.max_unpunctuated_words = max_unpunctuated_words
         # O whisper pode "alucinar" palavras curtas (ex.: "Bye.", "Thank you.")
         # em trechos de silêncio/ruído, mesmo com vad_filter ativado — quase
         # sempre com probabilidade baixa. Descartamos palavras abaixo desse
@@ -144,7 +150,10 @@ class LocalAgreementTranscriber:
         sentence = None
         if committed_text:
             self._pending_sentence = (self._pending_sentence + ' ' + committed_text).strip()
-        if self._pending_sentence and (forced or self._pending_sentence.rstrip().endswith(SENTENCE_END_CHARS)):
+
+        too_long_unpunctuated = len(self._pending_sentence.split()) >= self.max_unpunctuated_words
+        if self._pending_sentence and (
+                forced or too_long_unpunctuated or self._pending_sentence.rstrip().endswith(SENTENCE_END_CHARS)):
             sentence = self._pending_sentence
             self._pending_sentence = ''
 
@@ -157,7 +166,17 @@ class LocalAgreementTranscriber:
         }
 
     def flush(self):
-        """Força a finalização de qualquer frase pendente (ex.: ao parar a captura)."""
+        """
+        Força a finalização de qualquer frase pendente (ex.: ao parar a
+        captura). Inclui também qualquer trecho ainda tentativo (que não
+        teve tempo de ser confirmado pelo LocalAgreement nem pela detecção
+        de silêncio) — ao parar, é melhor mostrar um texto possivelmente
+        imperfeito do que perdê-lo silenciosamente.
+        """
+        if self._prev_words:
+            tail = ' '.join(self._prev_words)
+            self._pending_sentence = (self._pending_sentence + ' ' + tail).strip()
+            self._prev_words = []
         sentence = self._pending_sentence.strip() or None
         self._pending_sentence = ''
         return sentence
