@@ -9,6 +9,7 @@ from streaming_gui import StreamingTranslationTab
 from transcription import create_model, transcribe
 from translation import translate
 from tts import speak
+from virtual_mic_gui import VirtualMicTab
 
 SAMPLE_RATE = 16000
 DEFAULT_MODEL = 'base'
@@ -260,11 +261,15 @@ class App:
         self.streaming_tab = StreamingTranslationTab(notebook)
         notebook.add(self.streaming_tab, text='Tradução por Streaming')
 
+        self.virtual_mic_tab = VirtualMicTab(notebook)
+        notebook.add(self.virtual_mic_tab, text='Microfone Virtual')
+
         self.root.protocol('WM_DELETE_WINDOW', self._on_close)
 
     def _on_close(self):
         self.initial_tab.shutdown()
         self.streaming_tab.shutdown()
+        self.virtual_mic_tab.shutdown()
         self.root.destroy()
 
 

@@ -1,9 +1,10 @@
 # SpeakTranslate
 
-Captura áudio, transcreve, traduz e reproduz/mostra o resultado. A interface gráfica tem duas abas, para dois casos de uso diferentes:
+Captura áudio, transcreve, traduz e reproduz/mostra o resultado. A interface gráfica tem três abas:
 
 - **Tradução Inicial**: grava uma fala por vez (microfone ou qualquer entrada), transcreve, traduz e fala o resultado em voz. Pipeline: **captura de áudio** → **detecção de idioma + transcrição** ([faster-whisper](https://github.com/SYSTRAN/faster-whisper)) → **tradução local** ([OPUS-MT](https://github.com/Helsinki-NLP/Opus-MT) via [CTranslate2](https://github.com/OpenNMT/CTranslate2), ver [Tradução](#tradução-local-offline) abaixo) → **texto-para-voz** ([edge-tts](https://github.com/rany2/edge-tts) na nuvem, ou [Piper](https://github.com/rhasspy/piper) local — escolha o motor na interface, ver [Texto-para-voz](#texto-para-voz) abaixo).
-- **Tradução por Streaming**: pensada para acompanhar reuniões (Meet/Zoom/Teams) ao vivo — transcreve e traduz continuamente **enquanto a pessoa fala**, sem esperar uma pausa. Só faz a parte de "escutar" por enquanto (ver [Limitações](#tradução-por-streaming-limitações-e-próximos-passos) abaixo).
+- **Tradução por Streaming**: pensada para acompanhar reuniões (Meet/Zoom/Teams) ao vivo — transcreve e traduz continuamente **enquanto a pessoa fala**, sem esperar uma pausa, e tem um bloco de "Resposta" que fala de volta traduzido, capturando o seu microfone.
+- **Microfone Virtual**: digite um texto, escolha o idioma e toque a fala sintetizada direto num dispositivo de áudio virtual (ex.: BlackHole) — ferramenta simples para testar/usar o mecanismo de "fingir ser seu microfone" numa chamada sem precisar falar nem transcrever nada (ver [abaixo](#aba-microfone-virtual)).
 
 O diretório [`example/`](example) contém o projeto de referência (VoiceNote), que fornece apenas a parte de captura + transcrição via faster-whisper.
 
@@ -54,7 +55,22 @@ Se o idioma de saída for **japonês**, troque para "Edge (nuvem)" na interface 
 poetry run python run_gui.py
 ```
 
-Por padrão, a lista de "Entrada de áudio" (em ambas as abas) mostra os microfones disponíveis no sistema. Para transcrever o que está tocando no computador (ex.: áudio de um navegador ou de uma reunião) em vez do microfone, é necessário instalar um driver de áudio virtual com loopback, como o [BlackHole](https://github.com/ExistentialAudio/BlackHole) (gratuito), e configurar um "Dispositivo de Múltiplas Saídas" (Multi-Output Device) no Configurador de Áudio e MIDI do macOS para que o som saia tanto pelos alto-falantes quanto pelo BlackHole. Depois disso, o BlackHole aparece como uma opção de entrada na lista.
+Por padrão, a lista de "Entrada de áudio" (em ambas as abas) mostra os microfones disponíveis no sistema. Para transcrever o que está tocando no computador (ex.: áudio de um navegador ou de uma reunião) em vez do microfone, é necessário instalar um driver de áudio virtual com loopback, como o [BlackHole](https://github.com/ExistentialAudio/BlackHole) (gratuito).
+
+**Importante — use dois BlackHole separados, um para cada direção, nunca um Dispositivo de Múltiplas Saídas combinando BlackHole com seus alto-falantes.** Testamos isso na prática: combinar dispositivos virtuais e físicos num Multi-Output Device causa tanto um artefato de áudio ("som de aquário", por drift de clock entre os dispositivos) quanto vazamento de áudio entre as direções (o BlackHole captando de volta o que ele mesmo acabou de tocar). A configuração correta:
+
+```bash
+brew install --cask blackhole-2ch    # "microfone" — sua fala sintetizada sai por aqui
+brew install --cask blackhole-16ch   # "alto-falante" — a reunião entra por aqui
+```
+
+| Direção | Dispositivo | Onde configurar |
+|---|---|---|
+| Reunião → você (escutar/transcrever, bloco de baixo da aba Streaming) | **BlackHole 16ch** | No Zoom/Meet/Teams: defina como **alto-falante/saída** do app. No SpeakTranslate: selecione como entrada no bloco "Transcrição/tradução" |
+| Você → reunião (Resposta / Microfone Virtual) | **BlackHole 2ch** | No Zoom/Meet/Teams: defina como **microfone/entrada** do app. No SpeakTranslate: já é o padrão nessas duas abas |
+| Saída do sistema (macOS) | Seus alto-falantes/fones reais | Preferências do Sistema → Som → Saída — nunca o BlackHole nem um Multi-Output Device |
+
+Com essa separação, o app de chamada deixa de mandar o áudio da reunião pros seus alto-falantes de verdade (ele manda só pro BlackHole 16ch) — para continuar ouvindo a reunião ao vivo, marque **"Ouvir também nos alto-falantes"** no bloco "Transcrição/tradução": o app repassa em tempo real o que captura do BlackHole pros seus alto-falantes reais, em paralelo à transcrição.
 
 #### Aba "Tradução Inicial"
 
@@ -68,7 +84,7 @@ Feita para acompanhar reuniões ao vivo em outro idioma. Tem dois blocos indepen
 
 A fala é **fragmentada e enfileirada**: em vez de esperar a frase inteira terminar, cada ~6 palavras (ou uma pausa, o que vier primeiro) já é traduzido e mandado para tocar — e a captura do microfone **continua em paralelo**, sem esperar o áudio anterior terminar de tocar. Assim, numa frase longa, o começo já está sendo falado enquanto você ainda está terminando de falar o resto; cada pedaço toca na ordem certa, um de cada vez. Isso só é seguro com fone de ouvido — sem fone, o microfone captaria a própria fala sintetizada saindo pelos alto-falantes e criaria um loop.
 
-**Transcrição/tradução** (bloco de baixo): selecione como entrada de áudio o dispositivo de loopback (ex.: "BlackHole 2ch", com o Dispositivo de Múltiplas Saídas configurado como saída do sistema — assim você ouve a reunião normalmente e o app "escuta" a mesma coisa). Escolha o idioma de origem (ou "Detectar automaticamente"), o de destino e clique em **▶ Iniciar Transcrição**. O texto vai aparecendo em tempo real, aos poucos, à medida que a pessoa fala — não é necessário esperar uma pausa. A coluna da esquerda mostra a transcrição original; a da direita, a tradução; e a linha em itálico acima de cada bloco mostra a hipótese "provisória" mais recente (ainda pode mudar até ser confirmada). Clique em **⏹ Parar** para encerrar.
+**Transcrição/tradução** (bloco de baixo): selecione como entrada de áudio o dispositivo de loopback dedicado a escutar (ex.: "BlackHole 16ch" — ver a tabela de roteamento acima). Marque **"Ouvir também nos alto-falantes"** se quiser continuar escutando a reunião ao vivo (escolha o dispositivo de saída real — vem selecionado por padrão um que não seja outro BlackHole). Escolha o idioma de origem (ou "Detectar automaticamente"), o de destino e clique em **▶ Iniciar Transcrição**. O texto vai aparecendo em tempo real, aos poucos, à medida que a pessoa fala — não é necessário esperar uma pausa. A coluna da esquerda mostra a transcrição original; a da direita, a tradução; e a linha em itálico acima de cada bloco mostra a hipótese "provisória" mais recente (ainda pode mudar até ser confirmada). Clique em **⏹ Parar** para encerrar.
 
 Os dois blocos compartilham os seletores de idioma e de modelo Whisper (só ficam editáveis quando nenhum dos dois está rodando) e reaproveitam o mesmo modelo já carregado, mas usam microfone/dispositivo e mecanismos de captura totalmente independentes — dá pra escutar a reunião e responder ao mesmo tempo.
 
@@ -78,13 +94,24 @@ A prévia (linha em itálico) é sempre um trechinho curto e recente — nunca a
 
 ##### Tradução por Streaming: limitações conhecidas
 
-- **Sobre o "som de aquário" do Dispositivo de Múltiplas Saídas**: estudamos um projeto similar ([call-translator](https://github.com/LetovKai/call-translator)) que evita esse problema por completo usando dois BlackHole *sem nunca combiná-los* num Multi-Output Device — cada driver roda sozinho, então o macOS nunca precisa casar o clock de dois dispositivos (a causa raiz do artefato). A limitação: essa abordagem exige que o próprio app repasse o áudio capturado de volta pros seus alto-falantes (um "monitor" de software), já que sem o Multi-Output Device o sistema não faz mais esse desdobramento sozinho — não implementamos esse "monitor" ainda, então por enquanto continuamos recomendando o Multi-Output Device (funciona, só com o artefato ocasional já documentado).
-- **A "Resposta" só toca no seu computador** (alto-falantes/fones) — ainda não injeta a fala como microfone dentro do Meet/Zoom/Teams. Para isso, seria necessário um **segundo** dispositivo de áudio virtual (outra instância do BlackHole ou similar) configurado como microfone do app de reunião, para não criar loop de áudio com o canal usado para escutar a reunião — não implementado ainda.
-- **Sem fone de ouvido, o bloco "Resposta" pode entrar em loop**: como a captura roda em paralelo com a fala (ver acima), não há mais nenhum descarte de áudio durante a reprodução — o app assume que você está de fone e que o microfone não vai captar a própria voz sintetizada. Sem fone, isso pode causar o app ouvir, traduzir e falar a própria fala repetidamente.
+- **Use dois BlackHole separados (16ch pra escutar, 2ch pra falar), nunca um Dispositivo de Múltiplas Saídas** — ver a seção de roteamento acima. Testamos e confirmamos: combinar BlackHole com seus alto-falantes reais num Multi-Output Device causa tanto o artefato de "som de aquário" (drift de clock) quanto vazamento de áudio (o BlackHole captando de volta o que ele mesmo tocou). Para continuar ouvindo a reunião com essa separação, use o **monitor** (checkbox "Ouvir também nos alto-falantes" no bloco de baixo) em vez do Multi-Output Device.
+- **Injetar a "Resposta" como microfone na chamada exige o BlackHole 2ch dedicado** (ver tabela de roteamento) — sem isso, ela só toca localmente.
 - **Fragmentar em ~6 palavras (bloco "Resposta") pode soar um pouco menos fluido** que traduzir a frase inteira de uma vez — o motor de tradução não vê o resto da frase ao traduzir cada pedaço, então a frase falada pode ficar levemente mais "picotada" na entonação/coesão do que no bloco de baixo (que sempre traduz a frase completa). Troca deliberada: latência mais baixa em favor de um pouco de fluidez.
 - **Pequenas duplicações, perdas ou trocas de palavras podem ocorrer** nas bordas de corte do buffer de re-transcrição (mais perceptível se você parar a captura bem no meio/logo depois de falar, antes da pausa ser detectada) — limitação conhecida desse tipo de abordagem, mitigada (dedup nas bordas, filtro de confiança contra alucinação do whisper em silêncio, recuperação do texto provisório ao parar) mas não 100% eliminada.
 - **Idioma de origem fixo é mais estável que "Detectar automaticamente"**: como cada passagem re-transcreve de forma independente, deixar em automático pode fazer o idioma detectado oscilar entre passagens. Prefira selecionar o idioma da outra pessoa quando souber qual é.
 - Modelos menores (`tiny`/`base`) respondem mais rápido e são recomendados para uso em tempo real; modelos maiores (`medium`/`large-v3`) são mais precisos, mas cada passagem de re-transcrição demora mais.
+
+#### Aba "Microfone Virtual"
+
+Digite um texto, escolha o idioma de saída, o motor de voz e o dispositivo de saída (por padrão já vem selecionado um driver de loopback, se detectado — ex.: "BlackHole 2ch") e clique em **🔊 Falar no microfone virtual**. O áudio sai **só** por esse dispositivo — nada é tocado nos seus alto-falantes/fones.
+
+**Como isso engana um app de chamada**: um driver de loopback como o [BlackHole](https://github.com/ExistentialAudio/BlackHole) é bidirecional — o que qualquer programa *toca* nele fica disponível como *entrada* para qualquer outro programa que o selecione como dispositivo. Então:
+
+1. No Zoom/Meet/Teams, configure **BlackHole 2ch** (ou o que você tiver instalado) como **microfone**.
+2. Toque uma fala aqui na aba "Microfone Virtual" — ela sai só pelo BlackHole.
+3. O app de chamada, "ouvindo" o BlackHole como microfone, capta essa fala e a transmite pra reunião — como se você tivesse falado nele. Você mesmo não escuta nada localmente (o áudio nunca passa pelos seus alto-falantes).
+
+Essa é a mesma técnica usada internamente pelo bloco "Resposta" da aba de streaming (`tts.speak_to_device()` em [tts.py](src/speaktranslate/tts.py)) — esta aba é uma forma simples de testar/usar o mecanismo isoladamente, digitando o texto em vez de falar.
 
 ### Linha de comando
 

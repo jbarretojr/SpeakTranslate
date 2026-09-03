@@ -4,7 +4,9 @@ import tkinter as tk
 from tkinter import ttk, scrolledtext
 
 from app_constants import LANGUAGES, TTS_ENGINES, WHISPER_MODELS
-from audio_capture import ContinuousAudioCapture, list_input_devices
+import sounddevice as sd
+
+from audio_capture import AudioMonitor, ContinuousAudioCapture, list_input_devices
 from stream_transcription import LocalAgreementTranscriber
 from transcription import create_model
 from translation import translate
@@ -55,6 +57,7 @@ class StreamingTranslationTab(ttk.Frame):
         self._stop_event = threading.Event()
         self._worker_thread = None
         self._input_devices = []
+        self._monitor_output_devices = []
         self._last_preview_text = ''
 
         self._reply_running = False
@@ -65,6 +68,7 @@ class StreamingTranslationTab(ttk.Frame):
 
         self._build_widgets()
         self._refresh_devices()
+        self._refresh_monitor_devices()
         self._refresh_reply_devices()
         self.after(100, self._drain_queue)
 
@@ -149,9 +153,24 @@ class StreamingTranslationTab(ttk.Frame):
         self.refresh_devices_button = ttk.Button(options_frame, text='Atualizar', command=self._refresh_devices)
         self.refresh_devices_button.grid(row=2, column=3, sticky='w', padx=4, pady=(8, 0))
 
+        self.monitor_var = tk.BooleanVar(value=False)
+        self.monitor_check = ttk.Checkbutton(
+            options_frame, text='Ouvir também nos alto-falantes:', variable=self.monitor_var,
+            command=self._sync_monitor_device_state)
+        self.monitor_check.grid(row=3, column=0, sticky='w', pady=(8, 0))
+        self.monitor_device_var = tk.StringVar()
+        self.monitor_device_combo = ttk.Combobox(
+            options_frame, textvariable=self.monitor_device_var, width=38, state='disabled')
+        self.monitor_device_combo.grid(row=3, column=1, columnspan=2, sticky='we', padx=4, pady=(8, 0))
+        self.monitor_refresh_button = ttk.Button(
+            options_frame, text='Atualizar', command=self._refresh_monitor_devices, state='disabled')
+        self.monitor_refresh_button.grid(row=3, column=3, sticky='w', padx=4, pady=(8, 0))
+
         hint = ('Dica: para transcrever uma reunião (Meet/Zoom/Teams), selecione aqui o dispositivo de '
                 'loopback de áudio (ex.: "BlackHole 2ch") em vez do microfone. Modelos menores (tiny/base) '
-                'respondem mais rápido; recomendado para uso em tempo real.')
+                'respondem mais rápido; recomendado para uso em tempo real. Se usar dispositivos de '
+                'loopback separados para escutar e para a Resposta (recomendado — ver README), marque '
+                '"Ouvir também nos alto-falantes" para não perder o áudio da reunião ao vivo.')
         ttk.Label(self, text=hint, wraplength=600, foreground='#666').pack(fill='x', padx=10, pady=(0, 4))
 
         self.status_var = tk.StringVar(value='Ocioso')
@@ -205,6 +224,34 @@ class StreamingTranslationTab(ttk.Frame):
         if not label:
             return None
         return int(label.split(':', 1)[0])
+
+    def _refresh_monitor_devices(self):
+        previous = self.monitor_device_var.get()
+        devices = sd.query_devices()
+        self._monitor_output_devices = [
+            (i, d['name']) for i, d in enumerate(devices) if d.get('max_output_channels', 0) > 0
+        ]
+        labels = [f'{i}: {name}' for i, name in self._monitor_output_devices]
+        self.monitor_device_combo.configure(values=labels)
+        if previous in labels:
+            self.monitor_device_var.set(previous)
+        else:
+            # Padrão: um dispositivo de saída de verdade (não outro driver de
+            # loopback), já que o objetivo aqui é ouvir com os próprios ouvidos.
+            real_output = next((label for label in labels if 'blackhole' not in label.lower()), None)
+            self.monitor_device_var.set(real_output or (labels[0] if labels else ''))
+
+    def _selected_monitor_device_index(self):
+        label = self.monitor_device_var.get()
+        if not label:
+            return None
+        return int(label.split(':', 1)[0])
+
+    def _sync_monitor_device_state(self):
+        state = 'readonly' if self.monitor_var.get() and not self._running else 'disabled'
+        self.monitor_device_combo.configure(state=state)
+        self.monitor_refresh_button.configure(
+            state='normal' if self.monitor_var.get() and not self._running else 'disabled')
 
     def _refresh_reply_devices(self):
         previous = self.reply_device_var.get()
@@ -350,10 +397,13 @@ class StreamingTranslationTab(ttk.Frame):
             self.toggle_button.configure(text=LABEL_IDLE, state='normal')
             self.device_combo.configure(state='readonly')
             self.refresh_devices_button.configure(state='normal')
+            self.monitor_check.configure(state='normal')
         else:
             self.toggle_button.configure(text=LABEL_RUNNING, state='normal')
             self.device_combo.configure(state='disabled')
             self.refresh_devices_button.configure(state='disabled')
+            self.monitor_check.configure(state='disabled')
+        self._sync_monitor_device_state()
         self._sync_shared_controls()
 
     def _on_reply_toggle(self):
@@ -417,8 +467,11 @@ class StreamingTranslationTab(ttk.Frame):
         target_lang = self._selected_target_lang_code()
         model_size = self.model_var.get()
         device = self._selected_device_index()
+        monitor_enabled = self.monitor_var.get()
+        monitor_device = self._selected_monitor_device_index()
 
         capture = None
+        monitor = None
         try:
             self.model = self._get_model(model_size, on_status=self._set_status)
 
@@ -430,15 +483,25 @@ class StreamingTranslationTab(ttk.Frame):
             capture = ContinuousAudioCapture(sample_rate=SAMPLE_RATE, device=device)
             capture.start()
 
+            if monitor_enabled and monitor_device is not None:
+                monitor = AudioMonitor(output_device=monitor_device, sample_rate=SAMPLE_RATE)
+                monitor.start()
+
             while not self._stop_event.is_set():
                 self._stop_event.wait(PROCESS_INTERVAL_S)
-                engine.feed(capture.read_available())
+                audio_chunk = capture.read_available()
+                engine.feed(audio_chunk)
+                if monitor is not None:
+                    monitor.feed(audio_chunk)
                 detected = self._process_once(engine, target_lang)
                 if detected:
                     last_detected_lang = detected
 
             # dreno final: processa o que restou no buffer e fecha a frase pendente
-            engine.feed(capture.read_available())
+            audio_chunk = capture.read_available()
+            engine.feed(audio_chunk)
+            if monitor is not None:
+                monitor.feed(audio_chunk)
             detected = self._process_once(engine, target_lang)
             last_detected_lang = detected or last_detected_lang
             final_sentence = engine.flush()
@@ -454,6 +517,8 @@ class StreamingTranslationTab(ttk.Frame):
         finally:
             if capture is not None:
                 capture.stop()
+            if monitor is not None:
+                monitor.stop()
             self._finish()
 
     def _process_once(self, engine, target_lang):

@@ -121,3 +121,74 @@ class ContinuousAudioCapture:
                 return np.empty(0, dtype=np.int16)
             chunks, self._chunks = self._chunks, []
         return np.concatenate(chunks)
+
+
+class AudioMonitor:
+    """
+    Toca em tempo real, num dispositivo de saída, o mesmo áudio que já está
+    sendo capturado para transcrição (via `feed`) — para ouvir ao vivo, pelos
+    seus alto-falantes reais, o que está sendo transcrito de um driver de
+    loopback (BlackHole).
+
+    Necessário porque separar "escutar a reunião" (BlackHole dedicado) de
+    "falar na reunião" (outro BlackHole dedicado) — a única forma correta de
+    evitar que um vaze no outro — significa que nada mais repassa
+    automaticamente o áudio capturado pros seus alto-falantes.
+
+    Propositalmente NÃO abre seu próprio stream de entrada: abrir um segundo
+    stream no mesmo dispositivo de loopback com uma taxa de amostragem
+    diferente da já usada pela transcrição faz o CoreAudio engasgar (testado:
+    erros e perda de áudio nos dois streams). Em vez disso, reaproveita
+    exatamente o mesmo áudio que `ContinuousAudioCapture.read_available()`
+    já devolve — quem chama repassa pra cá via `feed()`.
+    """
+
+    def __init__(self, output_device, sample_rate=16000, channels=2, blocksize=960, max_queued_blocks=40):
+        output_info = sd.query_devices(output_device)
+        self.sample_rate = sample_rate
+        self._out_channels = max(1, min(channels, output_info['max_output_channels']))
+        self._max_queued_blocks = max_queued_blocks
+        self._buffer = deque()
+        self._lock = Lock()
+
+        self._output_stream = sd.OutputStream(
+            samplerate=sample_rate, device=output_device, channels=self._out_channels,
+            dtype='float32', blocksize=blocksize, callback=self._output_callback,
+        )
+
+    def feed(self, audio_int16_mono):
+        """Recebe áudio mono int16 (mesmo formato do ContinuousAudioCapture) e enfileira pra tocar."""
+        if audio_int16_mono is None or audio_int16_mono.size == 0:
+            return
+        block = (audio_int16_mono.astype(np.float32) / 32768.0).reshape(-1, 1)
+        if self._out_channels > 1:
+            block = np.tile(block, (1, self._out_channels))
+        with self._lock:
+            self._buffer.append(block)
+            # Se a saída não conseguir consumir no ritmo (ex.: engasgo),
+            # descarta os blocos mais antigos em vez de deixar a latência
+            # crescer sem limite.
+            while len(self._buffer) > self._max_queued_blocks:
+                self._buffer.popleft()
+
+    def _output_callback(self, outdata, frames, time_info, status):
+        with self._lock:
+            data = np.concatenate(self._buffer, axis=0) if self._buffer else None
+            self._buffer.clear()
+            if data is not None and len(data) > frames:
+                self._buffer.append(data[frames:])
+                data = data[:frames]
+
+        if data is None or len(data) == 0:
+            outdata[:] = 0
+            return
+        outdata[:len(data)] = data
+        if len(data) < frames:
+            outdata[len(data):] = 0
+
+    def start(self):
+        self._output_stream.start()
+
+    def stop(self):
+        self._output_stream.stop()
+        self._output_stream.close()
