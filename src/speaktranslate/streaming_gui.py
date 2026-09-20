@@ -10,7 +10,7 @@ from audio_capture import AudioMonitor, ContinuousAudioCapture, list_input_devic
 from stream_transcription import LocalAgreementTranscriber
 from transcription import create_model
 from translation import translate
-from tts import speak
+from tts import speak_to_device
 
 SAMPLE_RATE = 16000
 DEFAULT_MODEL = 'base'
@@ -32,14 +32,16 @@ class StreamingTranslationTab(ttk.Frame):
     Aba "Tradução por Streaming": pensada para reuniões (Meet/Zoom/Teams).
 
     Dois blocos independentes, que podem rodar ao mesmo tempo:
-    - "Resposta" (no topo): captura o SEU microfone, transcreve, traduz e
-      fala o resultado em voz — para quem está na reunião te ouvir no
-      idioma dela. Usa o idioma de "destino" como o que você fala, e o de
-      "origem" como o idioma de saída (papéis invertidos em relação ao
-      bloco de baixo, de propósito: é a via de volta da mesma conversa).
-    - Transcrição/tradução (abaixo): escuta a reunião (normalmente via um
-      dispositivo de loopback como o BlackHole) e mostra a transcrição e
-      tradução continuamente, sem esperar pausas na fala.
+    - Transcrição/tradução (bloco principal, no centro): escuta a reunião
+      (normalmente via um dispositivo de loopback como o BlackHole) e mostra
+      a transcrição e tradução continuamente, sem esperar pausas na fala.
+    - "Resposta" (rodapé, secundário, com seus próprios seletores de idioma
+      "Eu falo" / "Idioma de destino"): captura o SEU microfone, transcreve,
+      traduz e fala o resultado num dispositivo de saída escolhido (por
+      padrão um driver de loopback como o BlackHole, que a chamada enxerga
+      como "microfone") — mesmo mecanismo da aba "Microfone Virtual", só que
+      alimentado ao vivo pela sua fala em vez de texto digitado. É a via de
+      volta da mesma conversa do bloco principal.
 
     Ambos usam a mesma técnica de re-transcrição incremental (veja
     stream_transcription.py).
@@ -64,145 +66,200 @@ class StreamingTranslationTab(ttk.Frame):
         self._reply_stop_event = threading.Event()
         self._reply_worker_thread = None
         self._reply_input_devices = []
+        self._reply_output_devices = []
         self._reply_last_preview_text = ''
 
         self._build_widgets()
         self._refresh_devices()
         self._refresh_monitor_devices()
         self._refresh_reply_devices()
+        self._refresh_reply_output_devices()
         self.after(100, self._drain_queue)
 
-    def _build_reply_block(self):
-        frame = ttk.Frame(self, padding=10)
+    def _build_widgets(self):
+        self._build_options_bar()
+        self._build_control_row()
+        self._build_main_panes()
+        ttk.Separator(self, orient='horizontal').pack(fill='x', padx=10, pady=(0, 4))
+        self._build_reply_block()
+
+    def _build_options_bar(self):
+        """Barra compacta de configuração: idiomas, modelo e entrada de áudio
+        lado a lado, com rótulos curtos, para deixar mais espaço para a
+        transcrição/tradução abaixo."""
+        frame = ttk.Frame(self, padding=(10, 8, 10, 4))
         frame.pack(fill='x')
 
-        ttk.Label(frame, text='Resposta (fala pelo microfone → traduzida e falada em voz)',
-                  font=('TkDefaultFont', 10, 'bold')).grid(row=0, column=0, columnspan=4, sticky='w')
-
-        ttk.Label(frame, text='Microfone:').grid(row=1, column=0, sticky='w', pady=(6, 0))
-        self.reply_device_var = tk.StringVar()
-        self.reply_device_combo = ttk.Combobox(frame, textvariable=self.reply_device_var, width=38, state='readonly')
-        self.reply_device_combo.grid(row=1, column=1, columnspan=2, sticky='we', padx=4, pady=(6, 0))
-        self.reply_refresh_devices_button = ttk.Button(
-            frame, text='Atualizar', command=self._refresh_reply_devices)
-        self.reply_refresh_devices_button.grid(row=1, column=3, sticky='w', padx=4, pady=(6, 0))
-
-        ttk.Label(frame, text='Motor de voz:').grid(row=2, column=0, sticky='w', pady=(6, 0))
-        default_tts_label = TTS_ENGINES[0][1]
-        self.reply_tts_engine_var = tk.StringVar(value=default_tts_label)
-        self.reply_tts_engine_combo = ttk.Combobox(
-            frame, textvariable=self.reply_tts_engine_var, width=14, state='readonly',
-            values=[label for _, label in TTS_ENGINES])
-        self.reply_tts_engine_combo.grid(row=2, column=1, sticky='w', padx=4, pady=(6, 0))
-
-        self.reply_status_var = tk.StringVar(value='Ocioso')
-        ttk.Label(frame, textvariable=self.reply_status_var).grid(row=3, column=0, columnspan=2, sticky='w', pady=(6, 0))
-        self.reply_toggle_button = ttk.Button(frame, text=REPLY_LABEL_IDLE, command=self._on_reply_toggle)
-        self.reply_toggle_button.grid(row=3, column=3, sticky='e', pady=(6, 0))
-
-        preview_kwargs = dict(foreground='#888', font=('TkDefaultFont', 10, 'italic'), anchor='w')
-        self.reply_preview_var = tk.StringVar(value='')
-        ttk.Label(frame, textvariable=self.reply_preview_var, wraplength=280, justify='left',
-                  **preview_kwargs).grid(row=4, column=0, columnspan=2, sticky='we', pady=(4, 0))
-        self.reply_preview_translation_var = tk.StringVar(value='')
-        ttk.Label(frame, textvariable=self.reply_preview_translation_var, wraplength=280, justify='left',
-                  **preview_kwargs).grid(row=4, column=2, columnspan=2, sticky='we', pady=(4, 0))
-
-        self.reply_log_text = scrolledtext.ScrolledText(frame, height=4, state='disabled', wrap='word')
-        self.reply_log_text.grid(row=5, column=0, columnspan=4, sticky='we', pady=(6, 0))
-
-        frame.columnconfigure(1, weight=1)
-        frame.columnconfigure(2, weight=1)
-
-    def _build_widgets(self):
-        self._build_reply_block()
-        ttk.Separator(self, orient='horizontal').pack(fill='x', padx=10, pady=(4, 0))
-
-        options_frame = ttk.Frame(self, padding=10)
-        options_frame.pack(fill='x')
-
-        ttk.Label(options_frame, text='Idioma de origem:').grid(row=0, column=0, sticky='w')
+        ttk.Label(frame, text='Origem:').grid(row=0, column=0, sticky='w')
         source_values = [AUTO_DETECT_LABEL] + [label for _, label in LANGUAGES]
         default_source_label = next(
             (label for code, label in LANGUAGES if code == DEFAULT_SOURCE_LANG), source_values[0])
         self.source_lang_var = tk.StringVar(value=default_source_label)
         self.source_lang_combo = ttk.Combobox(
-            options_frame, textvariable=self.source_lang_var, width=18,
+            frame, textvariable=self.source_lang_var, width=16,
             state='readonly', values=source_values)
-        self.source_lang_combo.grid(row=0, column=1, sticky='w', padx=(4, 16))
+        self.source_lang_combo.grid(row=0, column=1, sticky='w', padx=(4, 14))
 
-        ttk.Label(options_frame, text='Idioma de destino:').grid(row=0, column=2, sticky='w')
+        ttk.Label(frame, text='Destino:').grid(row=0, column=2, sticky='w')
         default_target_label = next(
             (label for code, label in LANGUAGES if code == DEFAULT_TARGET_LANG), LANGUAGES[0][1])
         self.target_lang_var = tk.StringVar(value=default_target_label)
         self.target_lang_combo = ttk.Combobox(
-            options_frame, textvariable=self.target_lang_var, width=12,
+            frame, textvariable=self.target_lang_var, width=11,
             state='readonly', values=[label for _, label in LANGUAGES])
-        self.target_lang_combo.grid(row=0, column=3, sticky='w', padx=4)
+        self.target_lang_combo.grid(row=0, column=3, sticky='w', padx=(4, 14))
 
-        ttk.Label(options_frame, text='Modelo Whisper:').grid(row=1, column=0, sticky='w', pady=(8, 0))
+        ttk.Label(frame, text='Modelo:').grid(row=0, column=4, sticky='w')
         self.model_var = tk.StringVar(value=DEFAULT_MODEL)
-        self.model_combo = ttk.Combobox(options_frame, textvariable=self.model_var, width=10,
+        self.model_combo = ttk.Combobox(frame, textvariable=self.model_var, width=8,
                                          state='readonly', values=WHISPER_MODELS)
-        self.model_combo.grid(row=1, column=1, sticky='w', padx=(4, 16), pady=(8, 0))
+        self.model_combo.grid(row=0, column=5, sticky='w', padx=4)
 
-        ttk.Label(options_frame, text='Entrada de áudio:').grid(row=2, column=0, sticky='w', pady=(8, 0))
+        ttk.Label(frame, text='Entrada:').grid(row=1, column=0, sticky='w', pady=(6, 0))
         self.device_var = tk.StringVar()
-        self.device_combo = ttk.Combobox(options_frame, textvariable=self.device_var, width=38, state='readonly')
-        self.device_combo.grid(row=2, column=1, columnspan=2, sticky='we', padx=4, pady=(8, 0))
-        self.refresh_devices_button = ttk.Button(options_frame, text='Atualizar', command=self._refresh_devices)
-        self.refresh_devices_button.grid(row=2, column=3, sticky='w', padx=4, pady=(8, 0))
+        self.device_combo = ttk.Combobox(frame, textvariable=self.device_var, width=32, state='readonly')
+        self.device_combo.grid(row=1, column=1, columnspan=3, sticky='we', padx=(4, 4), pady=(6, 0))
+        self.refresh_devices_button = ttk.Button(frame, text='⟳', width=3, command=self._refresh_devices)
+        self.refresh_devices_button.grid(row=1, column=4, sticky='w', pady=(6, 0))
 
         self.monitor_var = tk.BooleanVar(value=False)
         self.monitor_check = ttk.Checkbutton(
-            options_frame, text='Ouvir também nos alto-falantes:', variable=self.monitor_var,
+            frame, text='Monitorar:', variable=self.monitor_var,
             command=self._sync_monitor_device_state)
-        self.monitor_check.grid(row=3, column=0, sticky='w', pady=(8, 0))
+        self.monitor_check.grid(row=2, column=0, sticky='w', pady=(6, 0))
         self.monitor_device_var = tk.StringVar()
         self.monitor_device_combo = ttk.Combobox(
-            options_frame, textvariable=self.monitor_device_var, width=38, state='disabled')
-        self.monitor_device_combo.grid(row=3, column=1, columnspan=2, sticky='we', padx=4, pady=(8, 0))
+            frame, textvariable=self.monitor_device_var, width=32, state='disabled')
+        self.monitor_device_combo.grid(row=2, column=1, columnspan=3, sticky='we', padx=(4, 4), pady=(6, 0))
         self.monitor_refresh_button = ttk.Button(
-            options_frame, text='Atualizar', command=self._refresh_monitor_devices, state='disabled')
-        self.monitor_refresh_button.grid(row=3, column=3, sticky='w', padx=4, pady=(8, 0))
+            frame, text='⟳', width=3, command=self._refresh_monitor_devices, state='disabled')
+        self.monitor_refresh_button.grid(row=2, column=4, sticky='w', pady=(6, 0))
 
-        hint = ('Dica: para transcrever uma reunião (Meet/Zoom/Teams), selecione aqui o dispositivo de '
-                'loopback de áudio (ex.: "BlackHole 2ch") em vez do microfone. Modelos menores (tiny/base) '
-                'respondem mais rápido; recomendado para uso em tempo real. Se usar dispositivos de '
-                'loopback separados para escutar e para a Resposta (recomendado — ver README), marque '
-                '"Ouvir também nos alto-falantes" para não perder o áudio da reunião ao vivo.')
-        ttk.Label(self, text=hint, wraplength=600, foreground='#666').pack(fill='x', padx=10, pady=(0, 4))
+        hint = ('Dica: para reuniões (Meet/Zoom/Teams), selecione um dispositivo de loopback '
+                '(ex.: "BlackHole 2ch") em "Entrada". Modelos menores (tiny/base) respondem mais rápido.')
+        ttk.Label(frame, text=hint, wraplength=640, foreground='#888',
+                  font=('TkDefaultFont', 9)).grid(row=3, column=0, columnspan=6, sticky='w', pady=(6, 0))
 
-        self.status_var = tk.StringVar(value='Ocioso')
-        ttk.Label(self, textvariable=self.status_var, font=('TkDefaultFont', 13, 'bold')).pack(pady=(4, 4))
+        frame.columnconfigure(1, weight=1)
+        frame.columnconfigure(3, weight=1)
 
-        button_frame = ttk.Frame(self)
-        button_frame.pack(pady=4)
-        self.toggle_button = ttk.Button(button_frame, text=LABEL_IDLE, command=self._on_toggle)
-        self.toggle_button.pack(side='left', padx=6)
+    def _build_control_row(self):
+        frame = ttk.Frame(self, padding=(10, 4, 10, 4))
+        frame.pack(fill='x')
+        self.toggle_button = ttk.Button(frame, text=LABEL_IDLE, command=self._on_toggle)
+        self.toggle_button.pack(side='left')
+        self.status_var = tk.StringVar(value='')
+        ttk.Label(frame, textvariable=self.status_var, font=('TkDefaultFont', 11, 'bold')).pack(
+            side='left', padx=(10, 0))
 
+    def _build_main_panes(self):
+        """Transcrição e tradução são o foco principal da aba: ocupam a maior
+        parte do espaço vertical, com fonte maior para leitura durante a
+        reunião."""
         panes = ttk.Panedwindow(self, orient='horizontal')
-        panes.pack(fill='both', expand=True, padx=10, pady=10)
+        panes.pack(fill='both', expand=True, padx=10, pady=(4, 8))
 
         preview_kwargs = dict(foreground='#888', font=('TkDefaultFont', 10, 'italic'),
                                wraplength=290, justify='left', anchor='w')
 
         transcript_frame = ttk.Frame(panes)
-        ttk.Label(transcript_frame, text='Transcrição (original)').pack(anchor='w')
+        ttk.Label(transcript_frame, text='Transcrição (original)',
+                  font=('TkDefaultFont', 11, 'bold')).pack(anchor='w')
         self.preview_var = tk.StringVar(value='')
         ttk.Label(transcript_frame, textvariable=self.preview_var, **preview_kwargs).pack(fill='x', pady=(0, 4))
-        self.transcript_text = scrolledtext.ScrolledText(transcript_frame, height=16, state='disabled', wrap='word')
+        self.transcript_text = scrolledtext.ScrolledText(
+            transcript_frame, height=20, state='disabled', wrap='word', font=('TkDefaultFont', 12))
         self.transcript_text.pack(fill='both', expand=True)
         panes.add(transcript_frame, weight=1)
 
         translation_frame = ttk.Frame(panes)
-        ttk.Label(translation_frame, text='Tradução').pack(anchor='w')
+        ttk.Label(translation_frame, text='Tradução', font=('TkDefaultFont', 11, 'bold')).pack(anchor='w')
         self.preview_translation_var = tk.StringVar(value='')
         ttk.Label(translation_frame, textvariable=self.preview_translation_var, **preview_kwargs).pack(
             fill='x', pady=(0, 4))
-        self.translation_text = scrolledtext.ScrolledText(translation_frame, height=16, state='disabled', wrap='word')
+        self.translation_text = scrolledtext.ScrolledText(
+            translation_frame, height=20, state='disabled', wrap='word', font=('TkDefaultFont', 12))
         self.translation_text.pack(fill='both', expand=True)
         panes.add(translation_frame, weight=1)
+
+    def _build_reply_block(self):
+        """Bloco "Resposta", compacto e no rodapé da aba — é um recurso
+        secundário em relação à transcrição/tradução da reunião acima."""
+        frame = ttk.Frame(self, padding=(10, 6, 10, 8))
+        frame.pack(fill='x')
+
+        ttk.Label(frame, text='Resposta (microfone → transcreve → traduz → fala)',
+                  font=('TkDefaultFont', 10, 'bold')).grid(row=0, column=0, columnspan=6, sticky='w')
+
+        # Idiomas próprios deste bloco (não compartilhados com o bloco
+        # principal) — evita a confusão de reaproveitar "Origem"/"Destino"
+        # com papéis invertidos.
+        ttk.Label(frame, text='Eu falo:').grid(row=1, column=0, sticky='w', pady=(4, 0))
+        default_my_lang_label = next(
+            (label for code, label in LANGUAGES if code == DEFAULT_TARGET_LANG), LANGUAGES[0][1])
+        self.reply_my_lang_var = tk.StringVar(value=default_my_lang_label)
+        self.reply_my_lang_combo = ttk.Combobox(
+            frame, textvariable=self.reply_my_lang_var, width=16, state='readonly',
+            values=[label for _, label in LANGUAGES])
+        self.reply_my_lang_combo.grid(row=1, column=1, sticky='w', padx=4, pady=(4, 0))
+
+        ttk.Label(frame, text='Idioma de destino:').grid(row=1, column=3, sticky='w', padx=(14, 0), pady=(4, 0))
+        default_output_lang_label = next(
+            (label for code, label in LANGUAGES if code == DEFAULT_SOURCE_LANG), LANGUAGES[0][1])
+        self.reply_output_lang_var = tk.StringVar(value=default_output_lang_label)
+        self.reply_output_lang_combo = ttk.Combobox(
+            frame, textvariable=self.reply_output_lang_var, width=14, state='readonly',
+            values=[label for _, label in LANGUAGES])
+        self.reply_output_lang_combo.grid(row=1, column=4, sticky='w', padx=4, pady=(4, 0))
+
+        ttk.Label(frame, text='Microfone:').grid(row=2, column=0, sticky='w', pady=(4, 0))
+        self.reply_device_var = tk.StringVar()
+        self.reply_device_combo = ttk.Combobox(frame, textvariable=self.reply_device_var, width=24, state='readonly')
+        self.reply_device_combo.grid(row=2, column=1, sticky='we', padx=4, pady=(4, 0))
+        self.reply_refresh_devices_button = ttk.Button(
+            frame, text='⟳', width=3, command=self._refresh_reply_devices)
+        self.reply_refresh_devices_button.grid(row=2, column=2, sticky='w', pady=(4, 0))
+
+        ttk.Label(frame, text='Voz:').grid(row=2, column=3, sticky='w', padx=(14, 0), pady=(4, 0))
+        default_tts_label = TTS_ENGINES[0][1]
+        self.reply_tts_engine_var = tk.StringVar(value=default_tts_label)
+        self.reply_tts_engine_combo = ttk.Combobox(
+            frame, textvariable=self.reply_tts_engine_var, width=12, state='readonly',
+            values=[label for _, label in TTS_ENGINES])
+        self.reply_tts_engine_combo.grid(row=2, column=4, sticky='w', padx=4, pady=(4, 0))
+
+        # Saída: por padrão um dispositivo de loopback (ex.: BlackHole), para
+        # que a fala traduzida vá direto pro "microfone virtual" que a chamada
+        # (Zoom/Meet/Teams) enxerga — em vez de tocar nos alto-falantes.
+        ttk.Label(frame, text='Saída:').grid(row=3, column=0, sticky='w', pady=(4, 0))
+        self.reply_output_device_var = tk.StringVar()
+        self.reply_output_device_combo = ttk.Combobox(
+            frame, textvariable=self.reply_output_device_var, width=24, state='readonly')
+        self.reply_output_device_combo.grid(row=3, column=1, sticky='we', padx=4, pady=(4, 0))
+        self.reply_refresh_output_devices_button = ttk.Button(
+            frame, text='⟳', width=3, command=self._refresh_reply_output_devices)
+        self.reply_refresh_output_devices_button.grid(row=3, column=2, sticky='w', pady=(4, 0))
+
+        self.reply_toggle_button = ttk.Button(frame, text=REPLY_LABEL_IDLE, command=self._on_reply_toggle)
+        self.reply_toggle_button.grid(row=3, column=4, columnspan=2, sticky='e', padx=(14, 0), pady=(4, 0))
+
+        self.reply_status_var = tk.StringVar(value='')
+        ttk.Label(frame, textvariable=self.reply_status_var).grid(
+            row=4, column=0, columnspan=6, sticky='w', pady=(4, 0))
+
+        preview_kwargs = dict(foreground='#888', font=('TkDefaultFont', 9, 'italic'), anchor='w')
+        self.reply_preview_var = tk.StringVar(value='')
+        ttk.Label(frame, textvariable=self.reply_preview_var, wraplength=280, justify='left',
+                  **preview_kwargs).grid(row=5, column=0, columnspan=3, sticky='we', pady=(2, 0))
+        self.reply_preview_translation_var = tk.StringVar(value='')
+        ttk.Label(frame, textvariable=self.reply_preview_translation_var, wraplength=280, justify='left',
+                  **preview_kwargs).grid(row=5, column=3, columnspan=3, sticky='we', pady=(2, 0))
+
+        self.reply_log_text = scrolledtext.ScrolledText(frame, height=3, state='disabled', wrap='word')
+        self.reply_log_text.grid(row=6, column=0, columnspan=6, sticky='we', pady=(4, 0))
+
+        frame.columnconfigure(1, weight=1)
+        frame.columnconfigure(4, weight=1)
 
     def _refresh_devices(self):
         previous = self.device_var.get()
@@ -275,6 +332,29 @@ class StreamingTranslationTab(ttk.Frame):
             return None
         return int(label.split(':', 1)[0])
 
+    def _refresh_reply_output_devices(self):
+        previous = self.reply_output_device_var.get()
+        devices = sd.query_devices()
+        self._reply_output_devices = [
+            (i, d['name']) for i, d in enumerate(devices) if d.get('max_output_channels', 0) > 0
+        ]
+        labels = [f'{i}: {name}' for i, name in self._reply_output_devices]
+        self.reply_output_device_combo.configure(values=labels)
+        if previous in labels:
+            self.reply_output_device_var.set(previous)
+        else:
+            # Padrão: um driver de loopback (ex.: BlackHole), já que o
+            # objetivo deste bloco é alimentar o "microfone virtual" que a
+            # chamada enxerga, não os alto-falantes de verdade.
+            loopback = next((label for label in labels if 'blackhole' in label.lower()), None)
+            self.reply_output_device_var.set(loopback or (labels[0] if labels else ''))
+
+    def _selected_reply_output_device_index(self):
+        label = self.reply_output_device_var.get()
+        if not label:
+            return None
+        return int(label.split(':', 1)[0])
+
     def _selected_source_lang_code(self):
         label = self.source_lang_var.get()
         if label == AUTO_DETECT_LABEL:
@@ -290,6 +370,20 @@ class StreamingTranslationTab(ttk.Frame):
             if lang_label == label:
                 return code
         return DEFAULT_TARGET_LANG
+
+    def _selected_reply_my_lang_code(self):
+        label = self.reply_my_lang_var.get()
+        for code, lang_label in LANGUAGES:
+            if lang_label == label:
+                return code
+        return DEFAULT_TARGET_LANG
+
+    def _selected_reply_output_lang_code(self):
+        label = self.reply_output_lang_var.get()
+        for code, lang_label in LANGUAGES:
+            if lang_label == label:
+                return code
+        return DEFAULT_SOURCE_LANG
 
     def _selected_reply_tts_engine(self):
         label = self.reply_tts_engine_var.get()
@@ -408,11 +502,8 @@ class StreamingTranslationTab(ttk.Frame):
 
     def _on_reply_toggle(self):
         if not self._reply_running:
-            source_lang = self._selected_source_lang_code()
-            if source_lang is None:
-                self._reply_log('[Selecione um idioma de origem específico (não "Detectar '
-                                 'automaticamente") antes de iniciar a Resposta — ele define '
-                                 'o idioma em que a fala traduzida sai.]')
+            if self._selected_reply_output_device_index() is None:
+                self._reply_log('[Nenhum dispositivo de saída disponível para "Saída".]')
                 return
             self._reply_stop_event = threading.Event()
             self._reply_running = True
@@ -426,24 +517,30 @@ class StreamingTranslationTab(ttk.Frame):
     def _sync_reply_controls(self):
         if not self._reply_running:
             self.reply_toggle_button.configure(text=REPLY_LABEL_IDLE, state='normal')
+            self.reply_my_lang_combo.configure(state='readonly')
+            self.reply_output_lang_combo.configure(state='readonly')
             self.reply_device_combo.configure(state='readonly')
             self.reply_refresh_devices_button.configure(state='normal')
+            self.reply_output_device_combo.configure(state='readonly')
+            self.reply_refresh_output_devices_button.configure(state='normal')
             self.reply_tts_engine_combo.configure(state='readonly')
         else:
             self.reply_toggle_button.configure(text=REPLY_LABEL_RUNNING, state='normal')
+            self.reply_my_lang_combo.configure(state='disabled')
+            self.reply_output_lang_combo.configure(state='disabled')
             self.reply_device_combo.configure(state='disabled')
             self.reply_refresh_devices_button.configure(state='disabled')
+            self.reply_output_device_combo.configure(state='disabled')
+            self.reply_refresh_output_devices_button.configure(state='disabled')
             self.reply_tts_engine_combo.configure(state='disabled')
         self._sync_shared_controls()
 
     def _sync_shared_controls(self):
-        # Os seletores de idioma/modelo são usados pelos dois blocos (que
-        # invertem os papéis de origem/destino entre si) — só liberam edição
-        # quando nenhum dos dois está em execução.
-        state = 'readonly' if not (self._running or self._reply_running) else 'disabled'
-        self.source_lang_combo.configure(state=state)
-        self.target_lang_combo.configure(state=state)
-        self.model_combo.configure(state=state)
+        # O modelo Whisper é compartilhado pelos dois blocos; os idiomas já
+        # não são mais (cada bloco tem seus próprios seletores).
+        self.source_lang_combo.configure(state='readonly' if not self._running else 'disabled')
+        self.target_lang_combo.configure(state='readonly' if not self._running else 'disabled')
+        self.model_combo.configure(state='readonly' if not (self._running or self._reply_running) else 'disabled')
 
     def shutdown(self):
         """Sinaliza para as worker threads encerrarem; não bloqueia a saída do app."""
@@ -510,7 +607,7 @@ class StreamingTranslationTab(ttk.Frame):
 
             self._set_preview('')
             self._set_preview_translation('')
-            self._set_status('Ocioso')
+            self._set_status('')
         except Exception as exc:
             self._append_transcript(f'\n[Erro: {exc}]')
             self._set_status('Erro')
@@ -570,15 +667,17 @@ class StreamingTranslationTab(ttk.Frame):
     # -- bloco "Resposta": microfone -> transcrição -> tradução -> fala ------
 
     def _reply_run_loop(self):
-        my_lang = self._selected_target_lang_code()  # idioma que EU falo
-        output_lang = self._selected_source_lang_code()  # idioma em que a fala sai
+        my_lang = self._selected_reply_my_lang_code()  # idioma que EU falo
+        output_lang = self._selected_reply_output_lang_code()  # idioma em que a fala sai
         model_size = self.model_var.get()
         device = self._selected_reply_device_index()
+        output_device = self._selected_reply_output_device_index()
         tts_engine = self._selected_reply_tts_engine()
 
         capture = None
         tts_queue = queue.Queue()
-        tts_thread = threading.Thread(target=self._reply_tts_worker, args=(tts_queue,), daemon=True)
+        tts_thread = threading.Thread(
+            target=self._reply_tts_worker, args=(tts_queue, output_device), daemon=True)
         tts_thread.start()
         try:
             self.model = self._get_model(model_size, on_status=self._set_reply_status)
@@ -618,7 +717,7 @@ class StreamingTranslationTab(ttk.Frame):
             tts_queue.put(None)
             tts_thread.join(timeout=30)
 
-            self._set_reply_status('Ocioso')
+            self._set_reply_status('')
         except Exception as exc:
             self._reply_log(f'[Erro: {exc}]')
             self._set_reply_status('Erro')
@@ -627,13 +726,18 @@ class StreamingTranslationTab(ttk.Frame):
                 capture.stop()
             self._reply_finish()
 
-    def _reply_tts_worker(self, tts_queue):
+    def _reply_tts_worker(self, tts_queue, output_device):
         """
         Consome a fila de fala numa thread separada, para que a captura e a
         transcrição do microfone nunca fiquem bloqueadas esperando o áudio
         anterior terminar de tocar — a pessoa pode continuar falando (e o
         app continua transcrevendo/traduzindo/enfileirando) enquanto uma
         fala anterior ainda está sendo reproduzida.
+
+        A fala é sempre tocada no dispositivo de saída escolhido (por padrão
+        um driver de loopback como o BlackHole), não no dispositivo padrão do
+        sistema — é o mesmo mecanismo da aba "Microfone Virtual", só que
+        alimentado pela transcrição/tradução ao vivo em vez de texto digitado.
         """
         while True:
             item = tts_queue.get()
@@ -641,7 +745,7 @@ class StreamingTranslationTab(ttk.Frame):
                 return
             text, lang, tts_engine = item
             try:
-                speak(text, lang, engine=tts_engine)
+                speak_to_device(text, lang, device=output_device, engine=tts_engine)
             except Exception as exc:
                 self._reply_log(f'[erro ao falar: {exc}]')
 
