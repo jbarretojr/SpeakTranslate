@@ -22,6 +22,9 @@ sentencepiece = "^0.2.0"
 sacremoses = "^0.1.1"
 torch = "^2.0"
 piper-tts = "^1.7.0"
+google-genai = "^1.2.0"
+kokoro = "^0.9.4"
+misaki = {version = "^0.9.4", extras = ["ja", "zh"]}
 
 [build-system]
 requires = ["poetry-core"]

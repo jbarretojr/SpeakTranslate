@@ -1,0 +1,11 @@
+# Bytecode compilado do Python — gerado automaticamente, não deve ser versionado.
+__pycache__/
+*.pyc
+
+# Segredos locais (ex.: GEMINI_API_KEY para a sugestão de resposta). Nunca
+# versionar: copie .env.example para .env e preencha localmente.
+.env
+
+# Ambientes virtuais, caso alguém crie um dentro do repo.
+.venv/
+venv/

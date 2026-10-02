@@ -6,6 +6,7 @@ import wave
 from pathlib import Path
 
 import edge_tts
+import numpy as np
 import soundfile as sf
 import sounddevice as sd
 
@@ -40,13 +41,28 @@ _PIPER_VOICES = {
 
 PIPER_VOICES_DIR = Path.home() / '.cache' / 'speaktranslate' / 'piper_voices'
 
-ENGINES = ('edge', 'piper')
+# Vozes Kokoro (https://huggingface.co/hexgrad/Kokoro-82M) por idioma: cada
+# entrada é (código de idioma do Kokoro, nome da voz). Modelo aberto, local,
+# mas sem suporte a russo, alemão nem coreano no momento.
+_KOKORO_LANGS = {
+    'en': ('a', 'af_heart'),
+    'es': ('e', 'ef_dora'),
+    'fr': ('f', 'ff_siwis'),
+    'it': ('i', 'if_sara'),
+    'ja': ('j', 'jf_alpha'),
+    'pt': ('p', 'pf_dora'),
+    'zh': ('z', 'zf_xiaobei'),
+}
+KOKORO_SAMPLE_RATE = 24000
+
+ENGINES = ('edge', 'piper', 'kokoro')
 DEFAULT_ENGINE = 'piper'
 
 SYNTHESIS_TIMEOUT_S = 20
 PLAYBACK_TIMEOUT_S = 60
 
 _piper_voices_cache = {}  # nome da voz -> instância PiperVoice já carregada
+_kokoro_pipelines_cache = {}  # código de idioma do Kokoro -> KPipeline já carregado
 
 
 def voice_for_language(lang_code, fallback='en-US-AriaNeural'):
@@ -55,6 +71,10 @@ def voice_for_language(lang_code, fallback='en-US-AriaNeural'):
 
 def piper_voice_available(lang_code):
     return lang_code in _PIPER_VOICES
+
+
+def kokoro_voice_available(lang_code):
+    return lang_code in _KOKORO_LANGS
 
 
 async def _synthesize_edge(text, voice, output_path):
@@ -79,6 +99,22 @@ def _load_piper_voice(voice_name):
     return voice
 
 
+def _load_kokoro_pipeline(kokoro_lang_code):
+    if kokoro_lang_code in _kokoro_pipelines_cache:
+        return _kokoro_pipelines_cache[kokoro_lang_code]
+
+    # Import tardio: o pacote "kokoro" (e o espeak-ng que ele usa por baixo
+    # para idiomas além do inglês) só é necessário se este motor for usado.
+    # Baixa os pesos do modelo (~327MB) do Hugging Face Hub na primeira vez
+    # que um idioma é usado, e fica em cache local (~/.cache/huggingface/)
+    # depois disso.
+    from kokoro import KPipeline
+
+    pipeline = KPipeline(lang_code=kokoro_lang_code)
+    _kokoro_pipelines_cache[kokoro_lang_code] = pipeline
+    return pipeline
+
+
 def _synthesize_to_file(text, lang_code, engine):
     """Sintetiza `text` num arquivo de áudio temporário e retorna o caminho (não reproduz)."""
     if engine == 'piper':
@@ -100,7 +136,26 @@ def _synthesize_to_file(text, lang_code, engine):
         asyncio.run(_synthesize_edge(text, voice, output_path))
         return output_path
 
-    raise ValueError(f'Motor de voz desconhecido: {engine!r} (use "edge" ou "piper")')
+    if engine == 'kokoro':
+        kokoro_lang = _KOKORO_LANGS.get(lang_code)
+        if kokoro_lang is None:
+            raise ValueError(f'Kokoro não tem voz disponível para o idioma "{lang_code}".')
+        kokoro_lang_code, voice_name = kokoro_lang
+        pipeline = _load_kokoro_pipeline(kokoro_lang_code)
+
+        # pipeline() divide o texto em frases e gera um pedaço de áudio por
+        # frase (generator); concatenamos tudo num único arquivo.
+        chunks = [audio for _, _, audio in pipeline(text, voice=voice_name)]
+        if not chunks:
+            raise RuntimeError('Kokoro não gerou áudio para o texto.')
+        audio = chunks[0] if len(chunks) == 1 else np.concatenate(chunks)
+
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
+            output_path = tmp_file.name
+        sf.write(output_path, audio, KOKORO_SAMPLE_RATE)
+        return output_path
+
+    raise ValueError(f'Motor de voz desconhecido: {engine!r} (use "edge", "piper" ou "kokoro")')
 
 
 def _play_file(path):
@@ -122,9 +177,12 @@ def speak(text, lang_code, engine=DEFAULT_ENGINE):
     """
     Sintetiza o texto em áudio e reproduz no dispositivo de saída padrão.
 
-    :param engine: 'edge' (edge-tts, nuvem, vozes neurais) ou 'piper'
-        (offline, 100% local — baixa o modelo de voz na primeira vez que um
-        idioma é usado e fica em cache em ~/.cache/speaktranslate/piper_voices/).
+    :param engine: 'edge' (edge-tts, nuvem, vozes neurais), 'piper' (offline,
+        100% local — baixa o modelo de voz na primeira vez que um idioma é
+        usado e fica em cache em ~/.cache/speaktranslate/piper_voices/) ou
+        'kokoro' (offline, 100% local, modelo maior/mais pesado — baixa os
+        pesos do Hugging Face Hub na primeira vez que um idioma é usado; sem
+        voz para russo, alemão e coreano).
     """
     if not text:
         return
@@ -144,7 +202,7 @@ def speak_to_device(text, lang_code, device, engine=DEFAULT_ENGINE):
     quem está na chamada ouve, mas quem está rodando o app não.
 
     :param device: índice do dispositivo de saída (ver `sounddevice.query_devices()`).
-    :param engine: 'edge' ou 'piper', ver `speak()`.
+    :param engine: 'edge', 'piper' ou 'kokoro', ver `speak()`.
     """
     if not text:
         return
