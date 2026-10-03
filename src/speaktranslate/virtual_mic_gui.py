@@ -6,7 +6,7 @@ from tkinter import ttk, scrolledtext
 import sounddevice as sd
 
 from app_constants import LANGUAGES, TTS_ENGINES
-from tts import speak_to_device
+from tts import kokoro_voices_for_lang, speak_to_device
 
 DEFAULT_TARGET_LANG = 'en'
 
@@ -34,6 +34,7 @@ class VirtualMicTab(ttk.Frame):
 
         self._build_widgets()
         self._refresh_devices()
+        self._sync_kokoro_voice_options()
         self.after(100, self._drain_queue)
 
     def _build_widgets(self):
@@ -56,6 +57,7 @@ class VirtualMicTab(ttk.Frame):
             options_frame, textvariable=self.lang_var, width=14, state='readonly',
             values=[label for _, label in LANGUAGES])
         self.lang_combo.grid(row=2, column=1, sticky='w', padx=4, pady=(10, 0))
+        self.lang_combo.bind('<<ComboboxSelected>>', lambda _event: self._sync_kokoro_voice_options())
 
         ttk.Label(options_frame, text='Motor de voz:').grid(row=3, column=0, sticky='w', pady=(6, 0))
         default_tts_label = TTS_ENGINES[0][1]
@@ -64,6 +66,16 @@ class VirtualMicTab(ttk.Frame):
             options_frame, textvariable=self.tts_engine_var, width=14, state='readonly',
             values=[label for _, label in TTS_ENGINES])
         self.tts_engine_combo.grid(row=3, column=1, sticky='w', padx=4, pady=(6, 0))
+        self.tts_engine_combo.bind('<<ComboboxSelected>>', lambda _event: self._sync_kokoro_voice_options())
+
+        # Só tem efeito (e só fica habilitado) quando o motor "Kokoro" está
+        # selecionado — os outros motores já escolhem a própria voz por
+        # idioma. Lista de vozes refeita a cada troca de idioma/motor.
+        ttk.Label(options_frame, text='Voz Kokoro:').grid(row=4, column=0, sticky='w', pady=(6, 0))
+        self.kokoro_voice_var = tk.StringVar(value='')
+        self.kokoro_voice_combo = ttk.Combobox(
+            options_frame, textvariable=self.kokoro_voice_var, width=14, state='disabled')
+        self.kokoro_voice_combo.grid(row=4, column=1, sticky='w', padx=4, pady=(6, 0))
 
         options_frame.columnconfigure(0, weight=1)
         options_frame.columnconfigure(1, weight=1)
@@ -120,6 +132,30 @@ class VirtualMicTab(ttk.Frame):
                 return code
         return TTS_ENGINES[0][0]
 
+    def _selected_kokoro_voice(self):
+        """None quando o motor não é "kokoro" ou quando não há voz escolhida
+        — nesse caso `speak_to_device()` usa a voz padrão do idioma."""
+        return self.kokoro_voice_var.get() or None
+
+    def _sync_kokoro_voice_options(self):
+        """Refaz a lista de vozes do combobox "Voz Kokoro:" a partir do
+        idioma/motor selecionados no momento. Chamado na troca de idioma, na
+        troca de motor, e por `_sync_controls()` (que também cuida de
+        habilitar/desabilitar durante a fala)."""
+        engine = self._selected_tts_engine()
+        lang = self._selected_lang_code()
+        voices = kokoro_voices_for_lang(lang) if engine == 'kokoro' else []
+
+        previous = self.kokoro_voice_var.get()
+        self.kokoro_voice_combo.configure(values=voices)
+        if not voices:
+            self.kokoro_voice_combo.configure(state='disabled')
+            self.kokoro_voice_var.set('')
+            return
+
+        self.kokoro_voice_combo.configure(state='disabled' if self._speaking else 'readonly')
+        self.kokoro_voice_var.set(previous if previous in voices else voices[0])
+
     # -- chamadas seguras a partir da worker thread: só enfileiram -----------
 
     def _set_status(self, status):
@@ -158,6 +194,7 @@ class VirtualMicTab(ttk.Frame):
             self.refresh_devices_button.configure(state='normal')
             self.lang_combo.configure(state='readonly')
             self.tts_engine_combo.configure(state='readonly')
+        self._sync_kokoro_voice_options()
 
     def _on_speak(self):
         if self._speaking:
@@ -172,15 +209,17 @@ class VirtualMicTab(ttk.Frame):
 
         lang = self._selected_lang_code()
         engine = self._selected_tts_engine()
+        voice = self._selected_kokoro_voice()
 
         self._speaking = True
         self._sync_controls()
-        threading.Thread(target=self._speak_worker, args=(text, lang, device, engine), daemon=True).start()
+        threading.Thread(
+            target=self._speak_worker, args=(text, lang, device, engine, voice), daemon=True).start()
 
-    def _speak_worker(self, text, lang, device, engine):
+    def _speak_worker(self, text, lang, device, engine, voice):
         try:
             self._set_status('Sintetizando e reproduzindo...')
-            speak_to_device(text, lang, device=device, engine=engine)
+            speak_to_device(text, lang, device=device, engine=engine, voice=voice)
             self._set_status('Ocioso')
         except Exception as exc:
             self._set_status(f'Erro: {exc}')

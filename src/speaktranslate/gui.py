@@ -100,6 +100,13 @@ class InitialTranslationTab(ttk.Frame):
             values=[label for _, label in TTS_ENGINES])
         self.tts_engine_combo.grid(row=0, column=5, sticky='w', padx=4)
 
+        # Ligado por padrão (comportamento de sempre); desmarcar pula a
+        # etapa de síntese/reprodução — útil pra quem só quer ver o texto
+        # transcrito/traduzido, sem a fala em voz alta.
+        self.play_audio_var = tk.BooleanVar(value=True)
+        self.play_audio_check = ttk.Checkbutton(frame, text='Reproduzir áudio', variable=self.play_audio_var)
+        self.play_audio_check.grid(row=0, column=6, sticky='w', padx=(14, 0))
+
         ttk.Label(frame, text='Entrada:').grid(row=1, column=0, sticky='w', pady=(6, 0))
         self.device_var = tk.StringVar()
         self.device_combo = ttk.Combobox(frame, textvariable=self.device_var, width=32, state='readonly')
@@ -285,6 +292,7 @@ class InitialTranslationTab(ttk.Frame):
             self.refresh_devices_button.configure(state='normal')
             self.target_lang_entry.configure(state='readonly')
             self.tts_engine_combo.configure(state='readonly')
+            self.play_audio_check.configure(state='normal')
         elif self._state == 'recording':
             self.toggle_button.configure(text=LABEL_RECORDING, state='normal')
             self.model_combo.configure(state='disabled')
@@ -292,6 +300,7 @@ class InitialTranslationTab(ttk.Frame):
             self.refresh_devices_button.configure(state='disabled')
             self.target_lang_entry.configure(state='disabled')
             self.tts_engine_combo.configure(state='disabled')
+            self.play_audio_check.configure(state='disabled')
         else:  # processing
             self.toggle_button.configure(text=LABEL_PROCESSING, state='disabled')
 
@@ -304,6 +313,7 @@ class InitialTranslationTab(ttk.Frame):
         model_size = self.model_var.get()
         device = self._selected_device_index()
         tts_engine = self._selected_tts_engine()
+        play_audio = self.play_audio_var.get()
 
         try:
             if self.model is None or self._loaded_model_size != model_size:
@@ -334,8 +344,9 @@ class InitialTranslationTab(ttk.Frame):
             translated_text = translate(text, detected_lang, target_lang)
             self._append_translation(translated_text)
 
-            self._set_status('Falando...')
-            speak(translated_text, target_lang, engine=tts_engine)
+            if play_audio:
+                self._set_status('Falando...')
+                speak(translated_text, target_lang, engine=tts_engine)
         except Exception as exc:
             self._append_transcript(f'[Erro: {exc}]')
         finally:
@@ -376,7 +387,7 @@ class App:
         self.root = root
         self.root.title('SpeakTranslate')
         self.root.geometry('640x560')
-        self.root.minsize(560, 420)
+        self.root.minsize(760, 720)
 
         notebook = ttk.Notebook(root)
         notebook.pack(fill='both', expand=True)

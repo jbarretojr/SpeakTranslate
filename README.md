@@ -44,13 +44,36 @@ Três opções, selecionáveis na interface ("Motor de voz") em cada lugar que f
 |---|---|---|---|---|
 | **[Piper](https://github.com/rhasspy/piper)** (padrão) | Local/offline | ~0,1-0,6s por frase (CPU) | Boa, um pouco mais "robótica" que vozes neurais de nuvem | Todos exceto japonês (sem voz oficial no catálogo do Piper) |
 | **edge-tts** | Online (nuvem, gratuito, não-oficial) | ~1-2s por frase (latência de rede) | Vozes neurais, bem natural | Todos os 10 idiomas do app |
-| **[Kokoro](https://huggingface.co/hexgrad/Kokoro-82M)** | Local/offline | Mais lento que o Piper (modelo maior, CPU) | Vozes neurais, mais natural que o Piper | Português, inglês, espanhol, francês, italiano, japonês, chinês — **sem** russo, alemão nem coreano |
+| **[Kokoro](https://huggingface.co/hexgrad/Kokoro-82M)** | Local/offline | Mais lento que o Piper (modelo maior, CPU) | Vozes neurais, mais natural que o Piper | Português, inglês, espanhol, francês, italiano, chinês — **sem** japonês, russo, alemão nem coreano |
 
 Piper baixa o modelo de voz (~20-60MB) na primeira vez que um idioma é usado, e fica em cache em `~/.cache/speaktranslate/piper_voices/` — depois disso é 100% offline. Vale a pena quando internet é instável, quando o custo/risco de depender de um serviço não-oficial (`edge-tts` é engenharia reversa do TTS do navegador Edge, sem contrato de suporte) preocupa, ou simplesmente para reduzir a latência da fala no bloco "Resposta" (streaming ao vivo).
 
 Kokoro é um modelo aberto (Apache 2.0) alternativo ao Piper: também 100% local, mas maior e mais lento — vale a pena testar quando a qualidade de voz do Piper incomoda e a latência extra não é um problema. Baixa os pesos (~327MB) do Hugging Face Hub na primeira vez que um idioma é usado (cache em `~/.cache/huggingface/`) e depende do **espeak-ng** instalado no sistema para idiomas além do inglês (`brew install espeak-ng` no macOS).
 
-Se o idioma de saída for **japonês**, não use o Piper (sem voz oficial no catálogo) — use "Edge (nuvem)" ou "Kokoro (local)". Se for **russo, alemão ou coreano**, não use o Kokoro (sem voz disponível) — use Piper ou Edge. Nesses casos a fala falha com um erro tratado (não trava o app, mas não sai áudio) se o motor escolhido não tiver voz para o idioma.
+**Requer Python 3.11 ou 3.12** — a dependência `misaki` (usada pelo Kokoro para texto-para-fonemas) ainda não dá suporte a Python 3.13. Em Python 3.13+ o `poetry install` simplesmente pula essa dependência (não trava a instalação), mas a opção "Kokoro (local)" fica indisponível na interface (erro tratado ao tentar falar). Pra usar o Kokoro, recrie a venv do projeto com Python 3.11/3.12, por exemplo via [pyenv](https://github.com/pyenv/pyenv):
+
+```bash
+pyenv install 3.12.13                              # baixa e compila o Python 3.12 (uma vez só)
+poetry env use ~/.pyenv/versions/3.12.13/bin/python  # recria a venv do projeto nessa versão
+poetry install
+```
+
+**Sem suporte a japonês**: o extra `misaki[ja]` traz o `pyopenjtalk`, uma extensão nativa C/C++ compilada via cmake — removida do projeto porque falha ao compilar em alguns toolchains do Xcode Command Line Tools (erro `tapi: malformed file`, ligado a um SDK desalinhado com o compilador). Os demais idiomas do Kokoro não precisam de extensão nativa e não são afetados.
+
+Vozes disponíveis por idioma (catálogo completo em `_KOKORO_VOICES` em [tts.py](src/speaktranslate/tts.py); lista oficial com nota de qualidade de cada uma em [VOICES.md](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md)) — na aba "Microfone Virtual" dá pra escolher qualquer uma delas no combobox "Voz Kokoro:":
+
+| Idioma | Femininas | Masculinas |
+|---|---|---|
+| Inglês | af_heart (padrão), af_bella, af_nicole, af_aoede, af_kore, af_sarah, af_nova, af_alloy, af_sky, af_jessica, af_river | am_fenrir, am_michael, am_puck, am_echo, am_eric, am_liam, am_onyx, am_santa, am_adam |
+| Português-BR | pf_dora (padrão) | pm_alex, pm_santa |
+| Espanhol | ef_dora (padrão) | em_alex, em_santa |
+| Italiano | if_sara (padrão) | im_nicola |
+| Chinês | zf_xiaobei (padrão), zf_xiaoni, zf_xiaoxiao, zf_xiaoyi | zm_yunjian, zm_yunxi, zm_yunxia, zm_yunyang |
+| Francês | ff_siwis (padrão, única opção) | — nenhuma no catálogo |
+
+O Kokoro não faz clonagem de voz (não replica o timbre de uma pessoa real a partir de uma amostra) — é um catálogo fixo de vozes sintéticas pré-treinadas.
+
+Se o idioma de saída for **japonês**, não use o Piper nem o Kokoro (nenhum dos dois tem voz) — use "Edge (nuvem)". Se for **russo, alemão ou coreano**, não use o Kokoro (sem voz disponível) — use Piper ou Edge. Nesses casos a fala falha com um erro tratado (não trava o app, mas não sai áudio) se o motor escolhido não tiver voz para o idioma.
 
 ## Sugestão de resposta (opcional, via Gemini)
 
@@ -91,7 +114,7 @@ Com essa separação, o app de chamada deixa de mandar o áudio da reunião pros
 
 #### Aba "Tradução Inicial"
 
-Escolha o idioma de destino, o modelo Whisper, o dispositivo de entrada de áudio (use **Atualizar** se conectar/desconectar um dispositivo) e o motor de voz (edge-tts ou Piper — ver [Texto-para-voz](#texto-para-voz) acima). O botão funciona como o atalho `Ctrl+Shift+Space` do VoiceNote (em [`example/`](example)): clique uma vez em **🎙 Iniciar Gravação** para começar a gravar, e clique novamente em **⏹ Parar Gravação** para encerrar a captura — a partir daí a transcrição, tradução e fala rodam sozinhas até o fim (o botão fica em "Processando..." nesse meio-tempo) e o app volta a ficar pronto para uma nova gravação. A transcrição e a tradução de cada gravação aparecem lado a lado, em destaque; o botão **💡 Sugerir resposta** (ver [acima](#sugestão-de-resposta-opcional-via-gemini)) usa a última gravação como referência.
+Escolha o idioma de destino, o modelo Whisper, o motor de voz (edge-tts, Piper ou Kokoro — ver [Texto-para-voz](#texto-para-voz) acima) e o dispositivo de entrada de áudio (use **Atualizar** se conectar/desconectar um dispositivo). O checkbox **"Reproduzir áudio"**, ao lado do motor de voz, vem marcado por padrão — desmarque se quiser só ver a transcrição/tradução, sem a fala em voz alta (pula a etapa de síntese, não só o volume). O botão funciona como o atalho `Ctrl+Shift+Space` do VoiceNote (em [`example/`](example)): clique uma vez em **🎙 Iniciar Transcrição** para começar a gravar, e clique novamente em **⏹ Parar Transcrição** para encerrar a captura — a partir daí a transcrição, tradução e (se marcado) a fala rodam sozinhas até o fim (o botão fica em "Processando..." nesse meio-tempo) e o app volta a ficar pronto para uma nova gravação. A transcrição e a tradução de cada gravação aparecem lado a lado, em destaque; o botão **💡 Sugerir resposta** (ver [acima](#sugestão-de-resposta-opcional-via-gemini)) usa a última gravação como referência.
 
 #### Aba "Tradução por Streaming"
 
@@ -121,6 +144,8 @@ A prévia (linha em itálico) é sempre um trechinho curto e recente — nunca a
 #### Aba "Microfone Virtual"
 
 Digite um texto, escolha o idioma de saída, o motor de voz e o dispositivo de saída (por padrão já vem selecionado um driver de loopback, se detectado — ex.: "BlackHole 2ch") e clique em **🔊 Falar no microfone virtual**. O áudio sai **só** por esse dispositivo — nada é tocado nos seus alto-falantes/fones.
+
+Quando o motor "Kokoro (local)" está selecionado, aparece um combobox **"Voz Kokoro:"** com as vozes disponíveis para o idioma escolhido (ex.: `af_heart`, `am_adam`... em inglês — ver a lista completa em [Texto-para-voz](#texto-para-voz) acima). A lista é refeita automaticamente ao trocar de idioma ou de motor; com Piper ou Edge selecionados, o campo fica desabilitado (esses motores já escolhem a própria voz por idioma).
 
 **Como isso engana um app de chamada**: um driver de loopback como o [BlackHole](https://github.com/ExistentialAudio/BlackHole) é bidirecional — o que qualquer programa *toca* nele fica disponível como *entrada* para qualquer outro programa que o selecione como dispositivo. Então:
 

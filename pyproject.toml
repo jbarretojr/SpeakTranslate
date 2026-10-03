@@ -23,8 +23,20 @@ sacremoses = "^0.1.1"
 torch = "^2.0"
 piper-tts = "^1.7.0"
 google-genai = "^1.2.0"
-kokoro = "^0.9.4"
-misaki = {version = "^0.9.4", extras = ["ja", "zh"]}
+# Kokoro depende do pacote "misaki", que não dá suporte a Python 3.13 em
+# nenhuma versão recente (trava em "<3.13" desde a 0.7.5) — por isso restrito
+# a Python 3.11/3.12 via marcador abaixo. Em Python 3.13+, o Poetry
+# simplesmente pula essas duas dependências (não trava o `poetry install`) e
+# o motor "Kokoro (local)" fica indisponível na interface (erro tratado, ver
+# tts.py) até rodar o projeto numa venv 3.11/3.12.
+kokoro = {version = "^0.9.4", python = ">=3.11,<3.13"}
+# O extra "ja" do misaki traz o pyopenjtalk (compila C/C++ nativo via cmake)
+# para dar suporte a japonês — removido porque o toolchain de compilação C
+# deste Mac (Xcode Command Line Tools/SDK) falha nesse build específico
+# ("tapi error: malformed file"). Sem ele, o Kokoro perde a voz japonesa,
+# mas ganha inglês/espanhol/francês/italiano/português/chinês sem problema
+# (nenhum deles precisa de extensão nativa). Ver README, seção "Texto-para-voz".
+misaki = {version = "^0.9.4", extras = ["zh"], python = ">=3.11,<3.13"}
 
 [build-system]
 requires = ["poetry-core"]
