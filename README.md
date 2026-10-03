@@ -1,5 +1,7 @@
 # SpeakTranslate
 
+![Tela inicial do SpeakTranslate — aba "Tradução Inicial"](docs/screenshots/traducao-inicial.png)
+
 Captura áudio, transcreve, traduz e reproduz/mostra o resultado. A interface gráfica tem três abas:
 
 - **Tradução Inicial**: grava uma fala por vez (microfone ou qualquer entrada), transcreve, traduz e fala o resultado em voz — transcrição e tradução aparecem lado a lado, em destaque (mesmo visual da aba "Tradução por Streaming"). Pipeline: **captura de áudio** → **detecção de idioma + transcrição** ([faster-whisper](https://github.com/SYSTRAN/faster-whisper)) → **tradução local** ([OPUS-MT](https://github.com/Helsinki-NLP/Opus-MT) via [CTranslate2](https://github.com/OpenNMT/CTranslate2), ver [Tradução](#tradução-local-offline) abaixo) → **texto-para-voz** ([edge-tts](https://github.com/rany2/edge-tts) na nuvem, ou [Piper](https://github.com/rhasspy/piper) local — escolha o motor na interface, ver [Texto-para-voz](#texto-para-voz) abaixo).
@@ -62,18 +64,26 @@ poetry install
 
 Vozes disponíveis por idioma (catálogo completo em `_KOKORO_VOICES` em [tts.py](src/speaktranslate/tts.py); lista oficial com nota de qualidade de cada uma em [VOICES.md](https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md)) — na aba "Microfone Virtual" dá pra escolher qualquer uma delas no combobox "Voz Kokoro:":
 
-| Idioma | Femininas | Masculinas |
+| Idioma | Masculinas | Femininas |
 |---|---|---|
-| Inglês | af_heart (padrão), af_bella, af_nicole, af_aoede, af_kore, af_sarah, af_nova, af_alloy, af_sky, af_jessica, af_river | am_fenrir, am_michael, am_puck, am_echo, am_eric, am_liam, am_onyx, am_santa, am_adam |
-| Português-BR | pf_dora (padrão) | pm_alex, pm_santa |
-| Espanhol | ef_dora (padrão) | em_alex, em_santa |
-| Italiano | if_sara (padrão) | im_nicola |
-| Chinês | zf_xiaobei (padrão), zf_xiaoni, zf_xiaoxiao, zf_xiaoyi | zm_yunjian, zm_yunxi, zm_yunxia, zm_yunyang |
-| Francês | ff_siwis (padrão, única opção) | — nenhuma no catálogo |
+| Inglês | am_michael (padrão), am_fenrir, am_puck, am_echo, am_eric, am_liam, am_onyx, am_santa, am_adam | af_heart, af_bella, af_nicole, af_aoede, af_kore, af_sarah, af_nova, af_alloy, af_sky, af_jessica, af_river |
+| Português-BR | pm_alex (padrão), pm_santa | pf_dora |
+| Espanhol | em_alex (padrão), em_santa | ef_dora |
+| Italiano | im_nicola (padrão) | if_sara |
+| Chinês | zm_yunjian (padrão), zm_yunxi, zm_yunxia, zm_yunyang | zf_xiaobei, zf_xiaoni, zf_xiaoxiao, zf_xiaoyi |
+| Francês | — nenhuma no catálogo | ff_siwis (padrão, única opção) |
 
 O Kokoro não faz clonagem de voz (não replica o timbre de uma pessoa real a partir de uma amostra) — é um catálogo fixo de vozes sintéticas pré-treinadas.
 
 Se o idioma de saída for **japonês**, não use o Piper nem o Kokoro (nenhum dos dois tem voz) — use "Edge (nuvem)". Se for **russo, alemão ou coreano**, não use o Kokoro (sem voz disponível) — use Piper ou Edge. Nesses casos a fala falha com um erro tratado (não trava o app, mas não sai áudio) se o motor escolhido não tiver voz para o idioma.
+
+### Vozes padrão: masculinas em todos os motores (quando existe opção)
+
+Os três motores usam vozes **masculinas por padrão**, idioma por idioma:
+
+- **edge-tts**: confirmado via `edge-tts --list-voices`, que já rotula Male/Female oficialmente — todos os 10 idiomas têm voz masculina.
+- **Kokoro**: o próprio nome da voz indica o gênero (`am_`/`em_`/`im_`/`pm_`/`zm_` = masculina) — masculina por padrão em todo idioma que tiver uma. **Exceção: francês**, que só tem a voz feminina `ff_siwis` no catálogo atual do Kokoro, sem alternativa.
+- **Piper**: **não existe metadado de gênero oficial** no projeto (nem no `voices.json`, nem nos `MODEL_CARD`s) — confirmamos pt/de/ru (faber/thorsten/denis) e en (trocado para `ryan`) com uma fonte externa. **Seguem femininas por decisão deliberada**, não por falta de alternativa masculina confirmada: francês (`siwis`) e coreano (`kss`) não têm **nenhuma** voz masculina no catálogo do Piper; italiano (`paola`) tem uma alternativa confirmada (`riccardo`), mas só em qualidade `x_low` (16kHz, perceptivelmente pior que o `medium` atual); chinês (`huayan`) tem uma candidata (`chaowen`, mesma qualidade `medium`), mas sem confirmação de gênero. Pra trocar qualquer uma dessas, edite `_PIPER_VOICES` em [tts.py](src/speaktranslate/tts.py).
 
 ## Sugestão de resposta (opcional, via Gemini)
 
@@ -114,9 +124,13 @@ Com essa separação, o app de chamada deixa de mandar o áudio da reunião pros
 
 #### Aba "Tradução Inicial"
 
-Escolha o idioma de destino, o modelo Whisper, o motor de voz (edge-tts, Piper ou Kokoro — ver [Texto-para-voz](#texto-para-voz) acima) e o dispositivo de entrada de áudio (use **Atualizar** se conectar/desconectar um dispositivo). O checkbox **"Reproduzir áudio"**, ao lado do motor de voz, vem marcado por padrão — desmarque se quiser só ver a transcrição/tradução, sem a fala em voz alta (pula a etapa de síntese, não só o volume). O botão funciona como o atalho `Ctrl+Shift+Space` do VoiceNote (em [`example/`](example)): clique uma vez em **🎙 Iniciar Transcrição** para começar a gravar, e clique novamente em **⏹ Parar Transcrição** para encerrar a captura — a partir daí a transcrição, tradução e (se marcado) a fala rodam sozinhas até o fim (o botão fica em "Processando..." nesse meio-tempo) e o app volta a ficar pronto para uma nova gravação. A transcrição e a tradução de cada gravação aparecem lado a lado, em destaque; o botão **💡 Sugerir resposta** (ver [acima](#sugestão-de-resposta-opcional-via-gemini)) usa a última gravação como referência.
+![Aba "Tradução Inicial"](docs/screenshots/traducao-inicial.png)
+
+Grava uma fala por vez (toggle iniciar/parar), transcreve, traduz e fala o resultado em voz. Escolha o idioma de destino, o modelo Whisper, o motor de voz (edge-tts, Piper ou Kokoro — ver [Texto-para-voz](#texto-para-voz) acima) e o dispositivo de entrada de áudio (use **Atualizar** se conectar/desconectar um dispositivo). O checkbox **"Reproduzir áudio"**, ao lado do motor de voz, vem marcado por padrão — desmarque se quiser só ver a transcrição/tradução, sem a fala em voz alta (pula a etapa de síntese, não só o volume). O botão funciona como o atalho `Ctrl+Shift+Space` do VoiceNote (em [`example/`](example)): clique uma vez em **🎙 Iniciar Transcrição** para começar a gravar, e clique novamente em **⏹ Parar Transcrição** para encerrar a captura — a partir daí a transcrição, tradução e (se marcado) a fala rodam sozinhas até o fim (o botão fica em "Processando..." nesse meio-tempo) e o app volta a ficar pronto para uma nova gravação. A transcrição e a tradução de cada gravação aparecem lado a lado, em destaque; o botão **💡 Sugerir resposta** (ver [acima](#sugestão-de-resposta-opcional-via-gemini)) usa a última gravação como referência.
 
 #### Aba "Tradução por Streaming"
+
+![Aba "Tradução por Streaming"](docs/screenshots/traducao-streaming.png)
 
 Feita para acompanhar reuniões ao vivo em outro idioma. Tem dois blocos independentes, que podem rodar ao mesmo tempo:
 
@@ -143,7 +157,11 @@ A prévia (linha em itálico) é sempre um trechinho curto e recente — nunca a
 
 #### Aba "Microfone Virtual"
 
+![Aba "Microfone Virtual"](docs/screenshots/microfone-virtual.png)
+
 Digite um texto, escolha o idioma de saída, o motor de voz e o dispositivo de saída (por padrão já vem selecionado um driver de loopback, se detectado — ex.: "BlackHole 2ch") e clique em **🔊 Falar no microfone virtual**. O áudio sai **só** por esse dispositivo — nada é tocado nos seus alto-falantes/fones.
+
+Antes de falar, o app **detecta automaticamente o idioma do texto digitado** ([lang_detect.py](src/speaktranslate/lang_detect.py), 100% local) e compara com o "Idioma de saída" escolhido: se já for o mesmo, fala o texto como está; se for outro idioma, traduz primeiro (tradução local, ver [acima](#tradução-local-offline)) e fala o resultado — não precisa trocar o idioma de saída manualmente nem traduzir por conta própria antes de colar o texto aqui. O que vai ser falado de fato (traduzido ou não) aparece em itálico abaixo da caixa de texto antes da síntese. Textos muito curtos (uma palavra só, por exemplo) são mais propensos a ter o idioma detectado errado — limitação normal desse tipo de detecção.
 
 Quando o motor "Kokoro (local)" está selecionado, aparece um combobox **"Voz Kokoro:"** com as vozes disponíveis para o idioma escolhido (ex.: `af_heart`, `am_adam`... em inglês — ver a lista completa em [Texto-para-voz](#texto-para-voz) acima). A lista é refeita automaticamente ao trocar de idioma ou de motor; com Piper ou Edge selecionados, o campo fica desabilitado (esses motores já escolhem a própria voz por idioma).
 

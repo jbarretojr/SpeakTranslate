@@ -2960,6 +2960,21 @@ files = [
 ]
 
 [[package]]
+name = "py3langid"
+version = "0.2.2"
+description = "Fork of the language identification tool langid.py, featuring a modernized codebase and faster execution times."
+optional = false
+python-versions = ">=3.6"
+groups = ["main"]
+files = [
+    {file = "py3langid-0.2.2-py3-none-any.whl", hash = "sha256:a5460ccc565c7b6a7a0e72f42236900b810e73c065a1b769a69fa9d9cff13f00"},
+    {file = "py3langid-0.2.2.tar.gz", hash = "sha256:b4de01dad7e701f29d216a0935e85e096cc8675903d23ea8445b2bb5f090b96f"},
+]
+
+[package.dependencies]
+numpy = "*"
+
+[[package]]
 name = "pyasn1"
 version = "0.6.4"
 description = "Pure-Python implementation of ASN.1 types and DER/BER/CER codecs (X.208)"
@@ -5096,4 +5111,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.11"
-content-hash = "763de7b1d80f1340f9180b4424b43c2b741fb55e0b25ed62056e2c64458cbfa4"
+content-hash = "7f6ce60c4629d385b539fcc92ff1d74537d95fb03c291a0ace32e11a761d3ea2"

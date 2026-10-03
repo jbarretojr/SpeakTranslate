@@ -6,6 +6,8 @@ from tkinter import ttk, scrolledtext
 import sounddevice as sd
 
 from app_constants import LANGUAGES, TTS_ENGINES
+from lang_detect import detect_language
+from translation import translate
 from tts import kokoro_voices_for_lang, speak_to_device
 
 DEFAULT_TARGET_LANG = 'en'
@@ -20,6 +22,12 @@ class VirtualMicTab(ttk.Frame):
     toque a fala sintetizada num dispositivo de áudio virtual (ex.: BlackHole)
     em vez do dispositivo de saída padrão — quem está numa chamada com esse
     dispositivo configurado como microfone escuta; você não.
+
+    Antes de falar, detecta automaticamente o idioma do texto digitado (ver
+    lang_detect.py): se já estiver no idioma de saída escolhido, fala direto;
+    se estiver em outro idioma, traduz primeiro (translation.py, local) e
+    fala o resultado — não precisa trocar o idioma de saída manualmente nem
+    traduzir o texto você mesmo antes de colar aqui.
 
     Simples teste manual do mecanismo usado pelo bloco "Resposta" da aba de
     streaming, sem precisar falar no microfone nem esperar transcrição.
@@ -86,7 +94,15 @@ class VirtualMicTab(ttk.Frame):
         ttk.Label(self, text=hint, wraplength=600, foreground='#666').pack(fill='x', padx=10, pady=(0, 4))
 
         self.text_box = scrolledtext.ScrolledText(self, height=10, wrap='word')
-        self.text_box.pack(fill='both', expand=True, padx=10, pady=(4, 10))
+        self.text_box.pack(fill='both', expand=True, padx=10, pady=(4, 4))
+
+        # Mostra o resultado da detecção de idioma/tradução automática antes
+        # de falar — assim dá pra conferir o que vai ser dito de fato, já que
+        # o texto digitado pode não ser o que sai pelo dispositivo virtual.
+        self.translation_preview_var = tk.StringVar(value='')
+        ttk.Label(self, textvariable=self.translation_preview_var, foreground='#888',
+                  font=('TkDefaultFont', 10, 'italic'), wraplength=600, justify='left', anchor='w').pack(
+            fill='x', padx=10, pady=(0, 6))
 
         bottom_frame = ttk.Frame(self)
         bottom_frame.pack(fill='x', padx=10, pady=(0, 10))
@@ -161,6 +177,9 @@ class VirtualMicTab(ttk.Frame):
     def _set_status(self, status):
         self._event_queue.put(('status', status))
 
+    def _set_translation_preview(self, text):
+        self._event_queue.put(('translation_preview', text))
+
     def _finish(self):
         self._event_queue.put(('finish', None))
 
@@ -175,6 +194,8 @@ class VirtualMicTab(ttk.Frame):
 
             if kind == 'status':
                 self.status_var.set(payload)
+            elif kind == 'translation_preview':
+                self.translation_preview_var.set(payload)
             elif kind == 'finish':
                 self._speaking = False
                 self._sync_controls()
@@ -213,13 +234,28 @@ class VirtualMicTab(ttk.Frame):
 
         self._speaking = True
         self._sync_controls()
+        self._set_translation_preview('')
         threading.Thread(
             target=self._speak_worker, args=(text, lang, device, engine, voice), daemon=True).start()
 
     def _speak_worker(self, text, lang, device, engine, voice):
         try:
+            self._set_status('Detectando idioma do texto...')
+            detected_lang = detect_language(text)
+
+            speak_text = text
+            if detected_lang and detected_lang != lang:
+                # Texto digitado em outro idioma: traduz pro idioma de saída
+                # antes de falar, em vez de falar o texto original sem
+                # querer no idioma errado.
+                self._set_status(f'Traduzindo de "{detected_lang}" para "{lang}"...')
+                speak_text = translate(text, detected_lang, lang)
+                self._set_translation_preview(f'Traduzido ({detected_lang} → {lang}): {speak_text}')
+            else:
+                self._set_translation_preview('Texto já está no idioma de saída — falando sem traduzir.')
+
             self._set_status('Sintetizando e reproduzindo...')
-            speak_to_device(text, lang, device=device, engine=engine, voice=voice)
+            speak_to_device(speak_text, lang, device=device, engine=engine, voice=voice)
             self._set_status('Ocioso')
         except Exception as exc:
             self._set_status(f'Erro: {exc}')

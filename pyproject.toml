@@ -23,6 +23,11 @@ sacremoses = "^0.1.1"
 torch = "^2.0"
 piper-tts = "^1.7.0"
 google-genai = "^1.2.0"
+# Detecção do idioma de um texto digitado (não áudio), usada na aba
+# "Microfone Virtual" para decidir se precisa traduzir antes de falar. Preso
+# em "<0.3.0" porque as versões seguintes (0.3.0+) exigem numpy>=2.0, que
+# conflita com o numpy<2.0 fixado acima (por causa do faster-whisper/ctranslate2).
+py3langid = ">=0.2.2,<0.3.0"
 # Kokoro depende do pacote "misaki", que não dá suporte a Python 3.13 em
 # nenhuma versão recente (trava em "<3.13" desde a 0.7.5) — por isso restrito
 # a Python 3.11/3.12 via marcador abaixo. Em Python 3.13+, o Poetry

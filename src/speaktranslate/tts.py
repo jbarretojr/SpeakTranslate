@@ -10,26 +10,40 @@ import numpy as np
 import soundfile as sf
 import sounddevice as sd
 
-# Uma voz neural padrão por idioma. Ver `edge-tts --list-voices` para outras opções.
+# Uma voz neural masculina padrão por idioma (confirmado via
+# `edge-tts --list-voices`, que já rotula Male/Female em cada voz — motor com
+# metadado de gênero oficial, diferente do Piper/Kokoro). Ver esse comando
+# para outras opções, inclusive femininas.
 _DEFAULT_VOICES = {
     'pt': 'pt-BR-AntonioNeural',
-    'en': 'en-US-AriaNeural',
-    'es': 'es-ES-ElviraNeural',
-    'fr': 'fr-FR-DeniseNeural',
-    'de': 'de-DE-KatjaNeural',
-    'it': 'it-IT-ElsaNeural',
-    'ja': 'ja-JP-NanamiNeural',
-    'ko': 'ko-KR-SunHiNeural',
-    'ru': 'ru-RU-SvetlanaNeural',
-    'zh': 'zh-CN-XiaoxiaoNeural',
+    'en': 'en-US-GuyNeural',
+    'es': 'es-ES-AlvaroNeural',
+    'fr': 'fr-FR-HenriNeural',
+    'de': 'de-DE-ConradNeural',
+    'it': 'it-IT-DiegoNeural',
+    'ja': 'ja-JP-KeitaNeural',
+    'ko': 'ko-KR-InJoonNeural',
+    'ru': 'ru-RU-DmitryNeural',
+    'zh': 'zh-CN-YunyangNeural',
 }
 
 # Vozes Piper (offline) por idioma. Qualidade "medium" — bom equilíbrio entre
 # naturalidade e velocidade em CPU. Japonês não tem voz oficial disponível no
 # catálogo do Piper no momento.
+#
+# Sobre gênero: o Piper não publica esse metadado (nem no voices.json, nem
+# nos MODEL_CARDs) — confirmamos pt/de/ru (faber/thorsten/denis) e it (via
+# riccardo) com uma fonte externa (tts.ai); en trocado de "lessac" (gênero
+# contestado em fóruns) para "ryan" (masculino, confirmação mais consistente).
+# es (davefx) é uma aposta razoável pelo nome, não confirmada. fr (siwis) e ko
+# (kss) não têm NENHUMA alternativa masculina no catálogo atual — ambas ficam
+# femininas por falta de opção. it (paola) e zh (huayan) continuam femininas
+# de propósito: a única alternativa masculina confirmada de it ("riccardo")
+# só existe em qualidade x_low (pior), e a de zh ("chaowen") não tem gênero
+# confirmado — ver conversa de decisão no histórico do projeto.
 _PIPER_VOICES = {
     'pt': 'pt_BR-faber-medium',
-    'en': 'en_US-lessac-medium',
+    'en': 'en_US-ryan-medium',
     'es': 'es_ES-davefx-medium',
     'fr': 'fr_FR-siwis-medium',
     'de': 'de_DE-thorsten-medium',
@@ -56,21 +70,24 @@ _KOKORO_LANGS = {
 }
 
 # Catálogo de vozes por idioma (ver VOICES.md do modelo, nomes af_/am_ etc. =
-# feminina/masculina). A primeira da lista é a usada por padrão quando
-# nenhuma voz específica é escolhida (ver `speak()`/`speak_to_device()`).
+# feminina/masculina — gênero explícito no próprio nome, ao contrário do
+# Piper). A primeira da lista é a usada por padrão quando nenhuma voz
+# específica é escolhida (ver `speak()`/`speak_to_device()`) — masculina em
+# todo idioma que tiver uma, exceto francês, que só tem a feminina ff_siwis
+# no catálogo atual do Kokoro (sem alternativa).
 _KOKORO_VOICES = {
     'en': [
+        'am_michael', 'am_fenrir', 'am_puck', 'am_echo', 'am_eric', 'am_liam', 'am_onyx', 'am_santa', 'am_adam',
         'af_heart', 'af_bella', 'af_nicole', 'af_aoede', 'af_kore', 'af_sarah', 'af_nova', 'af_alloy',
         'af_sky', 'af_jessica', 'af_river',
-        'am_fenrir', 'am_michael', 'am_puck', 'am_echo', 'am_eric', 'am_liam', 'am_onyx', 'am_santa', 'am_adam',
     ],
-    'es': ['ef_dora', 'em_alex', 'em_santa'],
+    'es': ['em_alex', 'em_santa', 'ef_dora'],
     'fr': ['ff_siwis'],
-    'it': ['if_sara', 'im_nicola'],
-    'pt': ['pf_dora', 'pm_alex', 'pm_santa'],
+    'it': ['im_nicola', 'if_sara'],
+    'pt': ['pm_alex', 'pm_santa', 'pf_dora'],
     'zh': [
-        'zf_xiaobei', 'zf_xiaoni', 'zf_xiaoxiao', 'zf_xiaoyi',
         'zm_yunjian', 'zm_yunxi', 'zm_yunxia', 'zm_yunyang',
+        'zf_xiaobei', 'zf_xiaoni', 'zf_xiaoxiao', 'zf_xiaoyi',
     ],
 }
 KOKORO_SAMPLE_RATE = 24000
@@ -85,7 +102,7 @@ _piper_voices_cache = {}  # nome da voz -> instância PiperVoice já carregada
 _kokoro_pipelines_cache = {}  # código de idioma do Kokoro -> KPipeline já carregado
 
 
-def voice_for_language(lang_code, fallback='en-US-AriaNeural'):
+def voice_for_language(lang_code, fallback='en-US-GuyNeural'):
     return _DEFAULT_VOICES.get(lang_code, fallback)
 
 
