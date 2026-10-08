@@ -42,6 +42,11 @@ kokoro = {version = "^0.9.4", python = ">=3.11,<3.13"}
 # mas ganha inglês/espanhol/francês/italiano/português/chinês sem problema
 # (nenhum deles precisa de extensão nativa). Ver README, seção "Texto-para-voz".
 misaki = {version = "^0.9.4", extras = ["zh"], python = ">=3.11,<3.13"}
+# Cliente do protocolo obs-websocket v5, usado pela aba "Entrevista" para
+# controlar um OBS Studio já instalado (câmera virtual via Camera Extension
+# do OBS, em vez de desenvolvermos uma extensão de sistema própria — ver
+# README, seção "Aba Entrevista").
+obsws-python = ">=1.6,<2.0"
 
 [build-system]
 requires = ["poetry-core"]

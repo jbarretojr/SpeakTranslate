@@ -2,13 +2,14 @@
 
 ![Tela inicial do SpeakTranslate — aba "Tradução Inicial"](docs/screenshots/traducao-inicial.png)
 
-Captura áudio, transcreve, traduz e reproduz/mostra o resultado. A interface gráfica tem três abas:
+Captura áudio, transcreve, traduz e reproduz/mostra o resultado. A interface gráfica tem quatro abas:
 
 - **Tradução Inicial**: grava uma fala por vez (microfone ou qualquer entrada), transcreve, traduz e fala o resultado em voz — transcrição e tradução aparecem lado a lado, em destaque (mesmo visual da aba "Tradução por Streaming"). Pipeline: **captura de áudio** → **detecção de idioma + transcrição** ([faster-whisper](https://github.com/SYSTRAN/faster-whisper)) → **tradução local** ([OPUS-MT](https://github.com/Helsinki-NLP/Opus-MT) via [CTranslate2](https://github.com/OpenNMT/CTranslate2), ver [Tradução](#tradução-local-offline) abaixo) → **texto-para-voz** ([edge-tts](https://github.com/rany2/edge-tts) na nuvem, ou [Piper](https://github.com/rhasspy/piper) local — escolha o motor na interface, ver [Texto-para-voz](#texto-para-voz) abaixo).
 - **Tradução por Streaming**: pensada para acompanhar reuniões (Meet/Zoom/Teams) ao vivo — transcreve e traduz continuamente **enquanto a pessoa fala**, sem esperar uma pausa, e tem um bloco de "Resposta" (rodapé) que fala de volta traduzido, capturando o seu microfone.
 
 Nas duas primeiras abas, um botão opcional **💡 Sugerir resposta** (API Gemini, ver [Sugestão de resposta](#sugestão-de-resposta-opcional-via-gemini) abaixo) sugere uma resposta curta no idioma de quem falou, pronta pra ler/pronunciar — útil para quem tem domínio intermediário desse idioma.
 - **Microfone Virtual**: digite um texto, escolha o idioma e toque a fala sintetizada direto num dispositivo de áudio virtual (ex.: BlackHole) — ferramenta simples para testar/usar o mecanismo de "fingir ser seu microfone" numa chamada sem precisar falar nem transcrever nada (ver [abaixo](#aba-microfone-virtual)).
+- **Entrevista**: escolha um arquivo de vídeo e transmita ele em loop contínuo como **câmera virtual** do macOS — qualquer app (Chrome, Zoom, Meet, FaceTime...) seleciona essa câmera como se fosse uma webcam normal (ver [Aba Entrevista](#aba-entrevista-câmera-virtual) abaixo).
 
 O diretório [`example/`](example) contém o projeto de referência (VoiceNote), que fornece apenas a parte de captura + transcrição via faster-whisper.
 
@@ -172,6 +173,26 @@ Quando o motor "Kokoro (local)" está selecionado, aparece um combobox **"Voz Ko
 3. O app de chamada, "ouvindo" o BlackHole como microfone, capta essa fala e a transmite pra reunião — como se você tivesse falado nele. Você mesmo não escuta nada localmente (o áudio nunca passa pelos seus alto-falantes).
 
 Essa é a mesma técnica usada internamente pelo bloco "Resposta" da aba de streaming (`tts.speak_to_device()` em [tts.py](src/speaktranslate/tts.py)) — esta aba é uma forma simples de testar/usar o mecanismo isoladamente, digitando o texto em vez de falar.
+
+#### Aba "Entrevista" (câmera virtual)
+
+Escolha um arquivo de vídeo e transmita ele em loop contínuo como câmera virtual do macOS — qualquer app que use webcam (Chrome, Zoom, Meet, FaceTime...) passa a enxergar esse vídeo como se fosse uma câmera de verdade.
+
+**Como funciona (e por que via OBS)**: desde o macOS 12.3, a Apple substituiu o mecanismo antigo de câmera virtual (plugins DAL do CoreMediaIO — usado por ferramentas como CamTwist) por **Camera Extensions**, um tipo de extensão de sistema sandboxed. É o caminho oficial e o único que funciona de forma confiável em apps com sandbox como o Chrome, mas implementá-lo do zero é um projeto nativo à parte (Swift/Xcode, fora do stack Python deste app), que exige conta paga da Apple Developer Program (US$99/ano) pra assinar/notarizar fora da App Store. Em vez de reimplementar isso, esta aba controla um **OBS Studio** já instalado via [obs-websocket](https://github.com/obsproject/obs-websocket) (API v5): a "OBS Virtual Camera" do OBS (desde a v28) já usa exatamente essa Camera Extension, assinada e mantida pela equipe do OBS. O [`obs_controller.py`](src/speaktranslate/obs_controller.py) só cria/atualiza uma Fonte de Mídia com o vídeo escolhido (em loop) e liga/desliga essa câmera virtual — mesmo padrão arquitetural já usado neste projeto para áudio (o BlackHole é a infraestrutura de dispositivo virtual; o SpeakTranslate só controla por cima).
+
+**Configuração (uma vez só)**:
+
+```bash
+brew install --cask obs
+```
+
+1. **Abra o OBS Studio e deixe aberto** (pode minimizar) — sem ele rodando, a aba "Entrevista" falha com "connection refused" ao tentar conectar.
+2. Em **Ferramentas > WebSocket Server Settings**, **habilite o servidor** — vem **desligado por padrão**, mesmo em instalações novas da v28+ — e clique em "Show Connect Info" pra ver a senha. **Cole essa senha no campo "Senha do WebSocket:"** da aba "Entrevista" antes de iniciar: sem ela, a conexão falha com "authentication enabled but no password provided". Pra não redigitar a senha toda vez que o app abre, salve ela em `OBS_WEBSOCKET_PASSWORD` no `.env` (copie `.env.example` para `.env` — ignorado pelo git, igual à chave do Gemini acima); o campo já abre preenchido, mas continua editável normalmente.
+3. Clique em **Escolher...** e selecione o arquivo de vídeo (`.mp4`, `.mov`, `.mkv`...).
+4. Clique em **🎥 Iniciar Câmera Virtual**. Na primeira vez, o OBS acusa "a câmera virtual não está instalada" e o macOS pede aprovação manual da extensão em **Ajustes do Sistema > Geral > Itens de Login e Extensões** — permita, reinicie o OBS (às vezes é necessário) e tente de novo; isso só acontece uma vez por instalação do OBS. (Testamos esse fluxo completo numa instalação real — os dois avisos acima realmente aparecem na primeira vez.)
+5. No Chrome (ou outro app), selecione **"OBS Virtual Camera"** na lista de câmeras — o vídeo escolhido toca em loop contínuo até clicar em **⏹ Parar Câmera Virtual**.
+
+O OBS precisa continuar aberto (pode ficar minimizado) enquanto a câmera virtual estiver em uso. Trocar de vídeo e clicar em "Iniciar" de novo atualiza a mesma Fonte de Mídia, em vez de acumular cenas novas a cada uso.
 
 ### Linha de comando
 

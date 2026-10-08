@@ -2585,6 +2585,21 @@ files = [
 ]
 
 [[package]]
+name = "obsws-python"
+version = "1.8.0"
+description = "A Python SDK for OBS Studio WebSocket v5.0"
+optional = false
+python-versions = ">=3.9"
+groups = ["main"]
+files = [
+    {file = "obsws_python-1.8.0-py3-none-any.whl", hash = "sha256:537bde416e149b6f59e0b2f31761d4a40329feafec171bde6fc1346ab8516e28"},
+    {file = "obsws_python-1.8.0.tar.gz", hash = "sha256:e082894f80deb0836861fdc3c222e497308c8f66328da6075baba5b456a20971"},
+]
+
+[package.dependencies]
+websocket-client = "*"
+
+[[package]]
 name = "onnxruntime"
 version = "1.29.0"
 description = "ONNX Runtime is a runtime accelerator for Machine Learning models"
@@ -4740,6 +4755,23 @@ files = [
 dev = ["unittest2"]
 
 [[package]]
+name = "websocket-client"
+version = "1.9.2"
+description = "WebSocket client for Python with low level API options"
+optional = false
+python-versions = ">=3.10"
+groups = ["main"]
+files = [
+    {file = "websocket_client-1.9.2-py3-none-any.whl", hash = "sha256:e1a673830a9c7bfa47b1cd3d5e4178f4c9651d80a4eab02c9c23a1c3ec6250ce"},
+    {file = "websocket_client-1.9.2.tar.gz", hash = "sha256:0fcb57545848be86992e128218fd96dd87a6769ffdb1a968dff79632b85604d0"},
+]
+
+[package.extras]
+docs = ["Sphinx (>=6.0)", "myst-parser (>=2.0.0)", "sphinx_rtd_theme (>=1.1.0)"]
+optional = ["python-socks", "wsaccel"]
+test = ["pytest", "websockets"]
+
+[[package]]
 name = "websockets"
 version = "16.1.1"
 description = "An implementation of the WebSocket Protocol (RFC 6455 & 7692)"
@@ -5111,4 +5143,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.11"
-content-hash = "7f6ce60c4629d385b539fcc92ff1d74537d95fb03c291a0ace32e11a761d3ea2"
+content-hash = "d107d25e038b54b129fa7013dc5465c6221327bb07fd06f6bcb9810fe04185e2"

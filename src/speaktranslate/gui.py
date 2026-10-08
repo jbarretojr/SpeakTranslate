@@ -10,6 +10,7 @@ from streaming_gui import StreamingTranslationTab
 from transcription import create_model, transcribe
 from translation import translate
 from tts import speak
+from interview_gui import InterviewTab
 from virtual_mic_gui import VirtualMicTab
 
 SAMPLE_RATE = 16000
@@ -401,12 +402,16 @@ class App:
         self.virtual_mic_tab = VirtualMicTab(notebook)
         notebook.add(self.virtual_mic_tab, text='Microfone Virtual')
 
+        self.interview_tab = InterviewTab(notebook)
+        notebook.add(self.interview_tab, text='Entrevista')
+
         self.root.protocol('WM_DELETE_WINDOW', self._on_close)
 
     def _on_close(self):
         self.initial_tab.shutdown()
         self.streaming_tab.shutdown()
         self.virtual_mic_tab.shutdown()
+        self.interview_tab.shutdown()
         self.root.destroy()
 
 

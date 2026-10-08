@@ -17,34 +17,12 @@ na primeira chamada, sem precisar de nenhuma dependência extra para isso.
 """
 
 import os
-from pathlib import Path
+
+from env_config import load_dotenv_once
 
 _DEFAULT_MODEL = 'gemini-2.5-flash'
 
-_ENV_FILE = Path(__file__).resolve().parent.parent.parent / '.env'
-
 _client = None
-_env_loaded = False
-
-
-def _load_dotenv_once():
-    """Lê pares CHAVE=valor de um .env simples, sem sobrescrever variáveis já
-    definidas no ambiente (ex.: exportadas no shell) e sem exigir a
-    dependência python-dotenv só por causa disso."""
-    global _env_loaded
-    if _env_loaded:
-        return
-    _env_loaded = True
-    if not _ENV_FILE.exists():
-        return
-    for line in _ENV_FILE.read_text(encoding='utf-8').splitlines():
-        line = line.strip()
-        if not line or line.startswith('#') or '=' not in line:
-            continue
-        key, _, value = line.partition('=')
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        os.environ.setdefault(key, value)
 
 
 def _get_client():
@@ -52,7 +30,7 @@ def _get_client():
     if _client is not None:
         return _client
 
-    _load_dotenv_once()
+    load_dotenv_once()
     api_key = os.environ.get('GEMINI_API_KEY')
     if not api_key:
         raise RuntimeError(
