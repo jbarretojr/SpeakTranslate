@@ -1,6 +1,6 @@
 """
 Leitura de um arquivo .env simples na raiz do projeto — compartilhada por
-qualquer módulo que precise de uma credencial local (hoje: GEMINI_API_KEY em
+qualquer módulo que precise de uma credencial local (hoje: GEMINI_API_KEY/ANTHROPIC_API_KEY em
 llm_suggest.py, OBS_WEBSOCKET_PASSWORD em obs_controller.py/interview_gui.py).
 
 Não sobrescreve variáveis já definidas no ambiente (ex.: exportadas no

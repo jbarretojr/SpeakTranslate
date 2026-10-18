@@ -7,8 +7,8 @@ from app_constants import LANGUAGES, TTS_ENGINES, WHISPER_MODELS
 import sounddevice as sd
 
 from audio_capture import AudioMonitor, ContinuousAudioCapture, list_input_devices
-from llm_suggest import suggest_reply
 from stream_transcription import LocalAgreementTranscriber
+from suggest_panel import SuggestReplyPanel
 from transcription import create_model
 from translation import translate
 from tts import speak_to_device
@@ -62,12 +62,6 @@ class StreamingTranslationTab(ttk.Frame):
         self._input_devices = []
         self._monitor_output_devices = []
         self._last_preview_text = ''
-
-        # Último bloco (sentença) fechado no bloco principal — usado pelo
-        # botão "Sugerir resposta"; nunca acumula, só o mais recente importa.
-        self._last_block_text = ''
-        self._last_block_lang = None
-        self._suggesting = False
 
         self._reply_running = False
         self._reply_stop_event = threading.Event()
@@ -176,7 +170,7 @@ class StreamingTranslationTab(ttk.Frame):
         self.preview_var = tk.StringVar(value='')
         ttk.Label(transcript_frame, textvariable=self.preview_var, **preview_kwargs).pack(fill='x', pady=(0, 4))
         self.transcript_text = scrolledtext.ScrolledText(
-            transcript_frame, height=20, state='disabled', wrap='word', font=('TkDefaultFont', 12))
+            transcript_frame, height=14, state='disabled', wrap='word', font=('TkDefaultFont', 12))
         self.transcript_text.pack(fill='both', expand=True)
         panes.add(transcript_frame, weight=1)
 
@@ -186,29 +180,16 @@ class StreamingTranslationTab(ttk.Frame):
         ttk.Label(translation_frame, textvariable=self.preview_translation_var, **preview_kwargs).pack(
             fill='x', pady=(0, 4))
         self.translation_text = scrolledtext.ScrolledText(
-            translation_frame, height=20, state='disabled', wrap='word', font=('TkDefaultFont', 12))
+            translation_frame, height=14, state='disabled', wrap='word', font=('TkDefaultFont', 12))
         self.translation_text.pack(fill='both', expand=True)
         panes.add(translation_frame, weight=1)
 
     def _build_suggest_block(self):
-        """Botão "Sugerir resposta": chama a API Gemini (llm_suggest.py) com
-        o último bloco (sentença) fechado na transcrição e mostra uma
-        sugestão de resposta no idioma de quem está falando — pensado para
-        quem tem domínio intermediário desse idioma e só precisa ler ou
-        pronunciar a sugestão. Cada clique SUBSTITUI a sugestão anterior
-        (nunca acumula texto antigo + novo)."""
-        frame = ttk.Frame(self, padding=(10, 0, 10, 8))
-        frame.pack(fill='x')
-
-        self.suggest_button = ttk.Button(
-            frame, text='💡 Sugerir resposta', command=self._on_suggest_click)
-        self.suggest_button.pack(side='left')
-        self.suggest_status_var = tk.StringVar(value='')
-        ttk.Label(frame, textvariable=self.suggest_status_var, foreground='#888').pack(
-            side='left', padx=(10, 0))
-
-        self.suggest_text = tk.Text(self, height=3, state='disabled', wrap='word', padx=10, pady=6)
-        self.suggest_text.pack(fill='x', padx=10, pady=(0, 8))
+        """Botão "Sugerir resposta" (ver suggest_panel.py): cada sentença
+        fechada na transcrição entra no campo "Conversa", que pode ser
+        limpo/editado antes de pedir a sugestão à IA (Gemini ou Claude)."""
+        self.suggest_panel = SuggestReplyPanel(self)
+        self.suggest_panel.pack(fill='x', padx=10, pady=(0, 8))
 
     def _build_reply_block(self):
         """Bloco "Resposta", compacto e no rodapé da aba — é um recurso
@@ -440,14 +421,8 @@ class StreamingTranslationTab(ttk.Frame):
     def _finish(self):
         self._event_queue.put(('finish', None))
 
-    def _set_suggestion_status(self, status):
-        self._event_queue.put(('suggestion_status', status))
-
-    def _set_suggestion(self, text):
-        self._event_queue.put(('suggestion', text))
-
-    def _suggestion_done(self):
-        self._event_queue.put(('suggestion_done', None))
+    def _add_suggest_block(self, text, lang):
+        self._event_queue.put(('suggest_block', (text, lang)))
 
     def _reply_log(self, text):
         self._event_queue.put(('reply_log', text))
@@ -486,13 +461,8 @@ class StreamingTranslationTab(ttk.Frame):
             elif kind == 'finish':
                 self._running = False
                 self._sync_controls()
-            elif kind == 'suggestion_status':
-                self.suggest_status_var.set(payload)
-            elif kind == 'suggestion':
-                self._set_text_widget(self.suggest_text, payload)
-            elif kind == 'suggestion_done':
-                self._suggesting = False
-                self.suggest_button.configure(state='normal')
+            elif kind == 'suggest_block':
+                self.suggest_panel.add_block(*payload)
             elif kind == 'reply_log':
                 self._append_to(self.reply_log_text, payload)
             elif kind == 'reply_status':
@@ -514,17 +484,6 @@ class StreamingTranslationTab(ttk.Frame):
         widget.configure(state='normal')
         widget.insert('end', text + ' ')
         widget.see('end')
-        widget.configure(state='disabled')
-
-    @staticmethod
-    def _set_text_widget(widget, text):
-        """Como _append_to, mas SUBSTITUI todo o conteúdo em vez de
-        acrescentar — usado pela sugestão de resposta, que nunca deve
-        acumular texto de blocos antigos."""
-        widget.configure(state='normal')
-        widget.delete('1.0', 'end')
-        if text:
-            widget.insert('end', text)
         widget.configure(state='disabled')
 
     def _on_toggle(self):
@@ -700,7 +659,8 @@ class StreamingTranslationTab(ttk.Frame):
         if preview_text == self._last_preview_text:
             return
         self._last_preview_text = preview_text
-        if not preview_text:
+        # Origem = destino: nada a traduzir (só a transcrição importa).
+        if not preview_text or source_lang == target_lang:
             self._set_preview_translation('')
             return
         try:
@@ -713,44 +673,16 @@ class StreamingTranslationTab(ttk.Frame):
         sentence = sentence.strip()
         if not sentence:
             return
-        # Guarda o bloco (sentença fechada) mais recente, no idioma original,
-        # para o botão "Sugerir resposta" — sobrescreve o anterior, nunca
-        # acumula entre blocos.
-        self._last_block_text = sentence
-        self._last_block_lang = source_lang
+        # Sentença fechada, no idioma original, vai para o campo "Conversa"
+        # do painel "Sugerir resposta".
+        self._add_suggest_block(sentence, source_lang)
+        if source_lang == target_lang:
+            return  # já está no idioma de destino: fica só na transcrição
         try:
             translated = translate(sentence, source_lang, target_lang)
         except Exception as exc:
             translated = f'[erro na tradução: {exc}]'
         self._append_translation(translated)
-
-    # -- botão "Sugerir resposta" (API Gemini) --------------------------------
-
-    def _on_suggest_click(self):
-        if self._suggesting:
-            return
-        text = self._last_block_text
-        if not text:
-            self.suggest_status_var.set('Aguarde a transcrição de um trecho para sugerir uma resposta.')
-            return
-
-        lang_code = self._last_block_lang
-        lang_label = next((label for code, label in LANGUAGES if code == lang_code), lang_code or '')
-
-        self._suggesting = True
-        self.suggest_button.configure(state='disabled')
-        self.suggest_status_var.set('Gerando sugestão...')
-        threading.Thread(target=self._suggest_worker, args=(text, lang_label), daemon=True).start()
-
-    def _suggest_worker(self, text, lang_label):
-        try:
-            suggestion = suggest_reply(text, lang_label)
-            self._set_suggestion(suggestion or '(sem sugestão)')
-            self._set_suggestion_status('')
-        except Exception as exc:
-            self._set_suggestion_status(f'Erro: {exc}')
-        finally:
-            self._suggestion_done()
 
     # -- bloco "Resposta": microfone -> transcrição -> tradução -> fala ------
 

@@ -2,7 +2,7 @@
 __pycache__/
 *.pyc
 
-# Segredos locais (ex.: GEMINI_API_KEY para a sugestão de resposta). Nunca
+# Segredos locais (ex.: GEMINI_API_KEY/ANTHROPIC_API_KEY para a sugestão de resposta). Nunca
 # versionar: copie .env.example para .env e preencha localmente.
 .env
 

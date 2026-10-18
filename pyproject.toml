@@ -47,6 +47,7 @@ misaki = {version = "^0.9.4", extras = ["zh"], python = ">=3.11,<3.13"}
 # do OBS, em vez de desenvolvermos uma extensão de sistema própria — ver
 # README, seção "Aba Entrevista").
 obsws-python = ">=1.6,<2.0"
+anthropic = "^1.14.0"
 
 [build-system]
 requires = ["poetry-core"]
