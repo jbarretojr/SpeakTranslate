@@ -2,12 +2,14 @@
 
 ![Tela inicial do SpeakTranslate — aba "Tradução Inicial"](docs/screenshots/traducao-inicial.png)
 
-Captura áudio, transcreve, traduz e reproduz/mostra o resultado. A interface gráfica tem quatro abas:
+Captura áudio, transcreve, traduz e reproduz/mostra o resultado. A interface gráfica tem cinco abas:
 
 - **Tradução Inicial**: grava uma fala por vez (microfone ou qualquer entrada), transcreve, traduz e fala o resultado em voz — transcrição e tradução aparecem lado a lado, em destaque (mesmo visual da aba "Tradução por Streaming"). Pipeline: **captura de áudio** → **detecção de idioma + transcrição** ([faster-whisper](https://github.com/SYSTRAN/faster-whisper)) → **tradução local** ([OPUS-MT](https://github.com/Helsinki-NLP/Opus-MT) via [CTranslate2](https://github.com/OpenNMT/CTranslate2), ver [Tradução](#tradução-local-offline) abaixo) → **texto-para-voz** ([edge-tts](https://github.com/rany2/edge-tts) na nuvem, ou [Piper](https://github.com/rhasspy/piper) local — escolha o motor na interface, ver [Texto-para-voz](#texto-para-voz) abaixo).
 - **Tradução por Streaming**: pensada para acompanhar reuniões (Meet/Zoom/Teams) ao vivo — transcreve e traduz continuamente **enquanto a pessoa fala**, sem esperar uma pausa, e tem um bloco de "Resposta" (rodapé) que fala de volta traduzido, capturando o seu microfone.
 
-Nas duas primeiras abas, um botão opcional **💡 Sugerir resposta** (API Gemini ou Claude, ver [Sugestão de resposta](#sugestão-de-resposta-opcional-via-gemini-ou-claude) abaixo) sugere uma resposta curta no idioma de quem falou, pronta pra ler/pronunciar — útil para quem tem domínio intermediário desse idioma.
+- **Sugestão**: só transcrição + sugestão de resposta, com a tela dedicada à resposta da IA — sem tradução nem voz (ver [Aba Sugestão](#aba-sugestão) abaixo).
+
+Nas três primeiras abas, o painel **💡 Sugerir resposta** (Gemini ou Claude, ver [Sugestão de resposta](#sugestão-de-resposta-opcional-via-gemini-ou-claude) abaixo) sugere uma resposta curta no idioma de quem falou, pronta pra ler/pronunciar — útil para quem tem domínio intermediário desse idioma.
 - **Microfone Virtual**: digite um texto, escolha o idioma e toque a fala sintetizada direto num dispositivo de áudio virtual (ex.: BlackHole) — ferramenta simples para testar/usar o mecanismo de "fingir ser seu microfone" numa chamada sem precisar falar nem transcrever nada (ver [abaixo](#aba-microfone-virtual)).
 - **Entrevista**: escolha um arquivo de vídeo e transmita ele em loop contínuo como **câmera virtual** do macOS — qualquer app (Chrome, Zoom, Meet, FaceTime...) seleciona essa câmera como se fosse uma webcam normal (ver [Aba Entrevista](#aba-entrevista-câmera-virtual) abaixo).
 
@@ -173,6 +175,10 @@ A prévia (linha em itálico) é sempre um trechinho curto e recente — nunca a
 - **Pequenas duplicações, perdas ou trocas de palavras podem ocorrer** nas bordas de corte do buffer de re-transcrição (mais perceptível se você parar a captura bem no meio/logo depois de falar, antes da pausa ser detectada) — limitação conhecida desse tipo de abordagem, mitigada (dedup nas bordas, filtro de confiança contra alucinação do whisper em silêncio, recuperação do texto provisório ao parar) mas não 100% eliminada.
 - **Idioma de origem fixo é mais estável que "Detectar automaticamente"**: como cada passagem re-transcreve de forma independente, deixar em automático pode fazer o idioma detectado oscilar entre passagens. Prefira selecionar o idioma da outra pessoa quando souber qual é.
 - Modelos menores (`tiny`/`base`) respondem mais rápido e são recomendados para uso em tempo real; modelos maiores (`medium`/`large-v3`) são mais precisos, mas cada passagem de re-transcrição demora mais.
+
+#### Aba "Sugestão"
+
+Versão enxuta das abas de tradução, focada na resposta da IA: uma linha de configuração (**Origem**, **Modelo**, **Entrada**), o botão **▶ Iniciar Transcrição** e, abaixo, o painel de sugestão ocupando o resto da tela. Não traduz nem fala — só transcreve (captura contínua, igual às outras abas) e acrescenta cada frase fechada ao campo **Conversa** (poucas linhas, editável, com os botões **💡 Sugerir resposta** / **🧹 Limpar conversa** e o seletor de **IA** ao lado). A sugestão aparece num bloco grande, com fonte maior, que cresce junto com a janela e tem rolagem se a resposta for mais longa que o espaço. A linha em itálico ao lado do botão mostra o que está sendo ouvido no momento.
 
 #### Aba "Microfone Virtual"
 

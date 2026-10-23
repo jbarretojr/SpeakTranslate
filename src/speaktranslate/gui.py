@@ -9,6 +9,7 @@ from app_constants import LANGUAGES, TTS_ENGINES, WHISPER_MODELS
 from audio_capture import ContinuousAudioCapture, list_input_devices
 from stream_transcription import LocalAgreementTranscriber
 from streaming_gui import StreamingTranslationTab
+from suggestion_gui import SuggestionTab
 from suggest_panel import SuggestReplyPanel
 from transcription import create_model
 from translation import translate
@@ -504,6 +505,9 @@ class App:
         self.streaming_tab = StreamingTranslationTab(notebook)
         notebook.add(self.streaming_tab, text='Tradução por Streaming')
 
+        self.suggestion_tab = SuggestionTab(notebook)
+        notebook.add(self.suggestion_tab, text='Sugestão')
+
         self.virtual_mic_tab = VirtualMicTab(notebook)
         notebook.add(self.virtual_mic_tab, text='Microfone Virtual')
 
@@ -515,6 +519,7 @@ class App:
     def _on_close(self):
         self.initial_tab.shutdown()
         self.streaming_tab.shutdown()
+        self.suggestion_tab.shutdown()
         self.virtual_mic_tab.shutdown()
         self.interview_tab.shutdown()
         self.root.destroy()

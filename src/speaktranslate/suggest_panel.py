@@ -1,7 +1,7 @@
 import queue
 import threading
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, scrolledtext
 
 from app_constants import LANGUAGES
 from llm_suggest import PROVIDERS, suggest_reply
@@ -9,8 +9,8 @@ from llm_suggest import PROVIDERS, suggest_reply
 
 class SuggestReplyPanel(ttk.Frame):
     """
-    Bloco "Sugerir resposta", compartilhado pelas abas "Tradução Inicial" e
-    "Tradução por Streaming".
+    Bloco "Sugerir resposta", compartilhado pelas abas "Tradução Inicial",
+    "Tradução por Streaming" e "Sugestão".
 
     Cada sentença fechada pela transcrição é acrescentada (via `add_block`)
     ao campo "Conversa" — o texto que será enviado à IA. O campo é editável
@@ -19,12 +19,18 @@ class SuggestReplyPanel(ttk.Frame):
     primeira à mão) e pedir a sugestão só com o que sobrou. A sugestão em si
     sempre SUBSTITUI a anterior (nunca acumula).
 
+    Dois layouts (`layout`):
+    - 'stacked' (padrão): compacto, empilhado abaixo da transcrição/tradução.
+    - 'focus': para a aba "Sugestão" — conversa em poucas linhas com os
+      botões ao lado, e a sugestão num bloco grande que ocupa o espaço que
+      sobrar na tela (com rolagem e fonte maior).
+
     Deve ser usado só a partir da thread principal (Tkinter); a chamada à
     API roda numa thread própria e devolve o resultado por uma fila drenada
     aqui mesmo.
     """
 
-    def __init__(self, master):
+    def __init__(self, master, layout='stacked'):
         super().__init__(master)
 
         self._event_queue = queue.Queue()
@@ -33,10 +39,49 @@ class SuggestReplyPanel(ttk.Frame):
         # "en") — é nele que a sugestão é pedida.
         self._lang = None
 
-        self._build_widgets()
+        if layout == 'focus':
+            self._build_focus_layout()
+        else:
+            self._build_stacked_layout()
         self.after(100, self._drain_queue)
 
-    def _build_widgets(self):
+    def _build_provider_combo(self, parent, width):
+        self.provider_var = tk.StringVar(value=PROVIDERS[0][1])
+        self.provider_combo = ttk.Combobox(
+            parent, textvariable=self.provider_var, width=width, state='readonly',
+            values=[label for _, label in PROVIDERS])
+        return self.provider_combo
+
+    def _build_focus_layout(self):
+        top = ttk.Frame(self)
+        top.pack(fill='x')
+        ttk.Label(top, text='Conversa (enviada para a IA — pode editar):', foreground='#888',
+                  font=('TkDefaultFont', 9)).grid(row=0, column=0, sticky='w')
+        self.context_text = scrolledtext.ScrolledText(
+            top, height=4, wrap='word', padx=8, pady=6, font=('TkDefaultFont', 12))
+        self.context_text.grid(row=1, column=0, sticky='nsew', pady=(2, 0))
+
+        side = ttk.Frame(top)
+        side.grid(row=1, column=1, sticky='n', padx=(8, 0), pady=(2, 0))
+        self.suggest_button = ttk.Button(side, text='💡 Sugerir resposta', command=self._on_suggest_click)
+        self.suggest_button.pack(fill='x')
+        self.clear_button = ttk.Button(side, text='🧹 Limpar conversa', command=self.clear)
+        self.clear_button.pack(fill='x', pady=(4, 0))
+        ttk.Label(side, text='IA:', foreground='#888', font=('TkDefaultFont', 9)).pack(anchor='w', pady=(6, 0))
+        self._build_provider_combo(side, width=20).pack(fill='x')
+        top.columnconfigure(0, weight=1)
+
+        self.status_var = tk.StringVar(value='')
+        ttk.Label(self, textvariable=self.status_var, foreground='#888').pack(anchor='w', pady=(4, 0))
+
+        ttk.Label(self, text='Sugestão', font=('TkDefaultFont', 11, 'bold')).pack(anchor='w', pady=(4, 0))
+        # height pequeno só define o tamanho MÍNIMO pedido; com expand=True o
+        # bloco cresce para ocupar todo o espaço livre da janela.
+        self.suggest_text = scrolledtext.ScrolledText(
+            self, height=6, state='disabled', wrap='word', padx=14, pady=12, font=('TkDefaultFont', 17))
+        self.suggest_text.pack(fill='both', expand=True, pady=(2, 0))
+
+    def _build_stacked_layout(self):
         row = ttk.Frame(self)
         row.pack(fill='x')
 
@@ -46,11 +91,7 @@ class SuggestReplyPanel(ttk.Frame):
         self.clear_button.pack(side='left', padx=(6, 0))
 
         ttk.Label(row, text='IA:').pack(side='left', padx=(14, 0))
-        self.provider_var = tk.StringVar(value=PROVIDERS[0][1])
-        self.provider_combo = ttk.Combobox(
-            row, textvariable=self.provider_var, width=22, state='readonly',
-            values=[label for _, label in PROVIDERS])
-        self.provider_combo.pack(side='left', padx=(4, 0))
+        self._build_provider_combo(row, width=22).pack(side='left', padx=(4, 0))
 
         self.status_var = tk.StringVar(value='')
         ttk.Label(row, textvariable=self.status_var, foreground='#888').pack(side='left', padx=(10, 0))
